@@ -12,7 +12,7 @@ from datetime import datetime
 
 NOTION_TOKEN     = os.environ["NOTION_TOKEN"]
 ANTHROPIC_KEY    = os.environ["ANTHROPIC_API_KEY"]
-TASKS_DB_ID      = "067cbf54-b7e7-41b0-9e05-9291a44a31c1"
+TASKS_DB_ID      = os.environ["NOTION_TASKS_DB_ID"]
 
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
