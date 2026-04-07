@@ -20,6 +20,18 @@ NOTION_HEADERS = {
     "Notion-Version": "2022-06-28",
 }
 
+# ── Mapa de campos Notion ─────────────────────────────────────────────────────
+# Si renombras un campo en Notion, actualiza SOLO aquí.
+FIELDS = {
+    "task":     "Task",
+    "status":   "Status",
+    "type":     "Type",
+    "priority": "Priority",
+    "context":  "Context",
+    "output":   "Output (Expected)",
+    "result":   "Agent Result ",   # Notion lo creó con espacio al final
+}
+
 # ── Notion: leer tareas ────────────────────────────────────────────────────────
 
 def get_pending_tasks():
@@ -28,12 +40,12 @@ def get_pending_tasks():
     payload = {
         "filter": {
             "and": [
-                {"property": "Status", "select": {"equals": "Not Started"}},
-                {"property": "Type",   "select": {"does_not_equal": "👤 Manual"}},
+                {"property": FIELDS["status"], "select": {"equals": "Not Started"}},
+                {"property": FIELDS["type"],   "select": {"does_not_equal": "👤 Manual"}},
             ]
         },
         "sorts": [
-            {"property": "Priority", "direction": "ascending"}
+            {"property": FIELDS["priority"], "direction": "ascending"}
         ]
     }
     response = requests.post(url, headers=NOTION_HEADERS, json=payload)
@@ -47,7 +59,7 @@ def get_top_task(tasks):
     """Devuelve la tarea más prioritaria."""
     priority_order = {"🔴 Alta": 0, "🟡 Media": 1, "🟢 Baja": 2, None: 3}
     def sort_key(t):
-        p = t["properties"].get("Priority", {}).get("select")
+        p = t["properties"].get(FIELDS["priority"], {}).get("select")
         return priority_order.get(p["name"] if p else None, 3)
     return sorted(tasks, key=sort_key)[0] if tasks else None
 
@@ -62,16 +74,16 @@ def extract_task_data(task):
         s = props.get(prop, {}).get("select")
         return s["name"] if s else None
     def title():
-        items = props.get("Task", {}).get("title", [])
+        items = props.get(FIELDS["task"], {}).get("title", [])
         return "".join(i["plain_text"] for i in items) if items else "Sin título"
 
     return {
         "id":       task["id"],
         "title":    title(),
-        "type":     select("Type"),
-        "priority": select("Priority"),
-        "context":  text("Context"),
-        "output":   text("Output (Expected)"),
+        "type":     select(FIELDS["type"]),
+        "priority": select(FIELDS["priority"]),
+        "context":  text(FIELDS["context"]),
+        "output":   text(FIELDS["output"]),
     }
 
 # ── Claude: ejecutar tarea ─────────────────────────────────────────────────────
@@ -130,8 +142,8 @@ def update_task(task_id, result_text, task_type):
     url = f"https://api.notion.com/v1/pages/{task_id}"
     payload = {
         "properties": {
-            "Status": {"select": {"name": "In Progress"}},
-            "Agent Result ": {
+            FIELDS["status"]: {"select": {"name": "In Progress"}},
+            FIELDS["result"]: {
                 "rich_text": [{"type": "text", "text": {"content": full_result[:2000]}}]
             }
         }
