@@ -106,7 +106,7 @@ Ejecuta ahora."""
             "content-type": "application/json",
         },
         json={
-            "model": "claude-sonnet-4-5-20250514",
+            "model": "claude-3-5-sonnet-20241022",
             "max_tokens": 1000,
             "system": instruccion,
             "messages": [{"role": "user", "content": prompt}],
