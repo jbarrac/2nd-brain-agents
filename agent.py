@@ -106,12 +106,14 @@ Ejecuta ahora."""
             "content-type": "application/json",
         },
         json={
-            "model": "claude-sonnet-4-5",
+            "model": "claude-sonnet-4-5-20250514",
             "max_tokens": 1000,
             "system": instruccion,
             "messages": [{"role": "user", "content": prompt}],
         }
     )
+    if not response.ok:
+        print(f"❌ Anthropic error {response.status_code}: {response.text}")
     response.raise_for_status()
     return response.json()["content"][0]["text"]
 
