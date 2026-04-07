@@ -38,6 +38,8 @@ def get_pending_tasks():
         ]
     }
     response = requests.post(url, headers=NOTION_HEADERS, json=payload)
+    if not response.ok:
+        print(f"❌ Notion error {response.status_code}: {response.text}")
     response.raise_for_status()
     return response.json().get("results", [])
 
