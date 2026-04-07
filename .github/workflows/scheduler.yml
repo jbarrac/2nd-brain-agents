@@ -1,9 +1,7 @@
 name: 🤖 Agente Ejecutor de Tareas
  
 on:
-  schedule:
-    - cron: '0 * * * *'   # cada hora en punto
-  workflow_dispatch:        # permite lanzarlo manualmente desde GitHub
+  workflow_dispatch:        # solo se lanza manualmente desde GitHub
  
 jobs:
   run-agent:
