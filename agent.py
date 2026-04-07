@@ -12,7 +12,7 @@ from datetime import datetime
 
 NOTION_TOKEN     = os.environ["NOTION_TOKEN"]
 ANTHROPIC_KEY    = os.environ["ANTHROPIC_API_KEY"]
-TASKS_DB_ID      = os.environ["NOTION_TASKS_DB_ID"]
+TASKS_DB_ID      = "067cbf54b7e741b09e059291a44a31c1"
 
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -105,7 +105,7 @@ Ejecuta ahora."""
             "content-type": "application/json",
         },
         json={
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-5",
             "max_tokens": 1000,
             "system": instruccion,
             "messages": [{"role": "user", "content": prompt}],
@@ -128,7 +128,7 @@ def update_task(task_id, result_text, task_type):
     payload = {
         "properties": {
             "Status": {"select": {"name": "In Progress"}},
-            "Agent Result ": {
+            "Agent Result": {
                 "rich_text": [{"type": "text", "text": {"content": full_result[:2000]}}]
             }
         }
