@@ -28,9 +28,8 @@ def get_pending_tasks():
     payload = {
         "filter": {
             "and": [
-                {"property": "Status",  "select": {"equals": "Not Started"}},
-                {"property": "Done",    "checkbox": {"equals": False}},
-                {"property": "Type",    "select": {"does_not_equal": "👤 Manual"}},
+                {"property": "Status", "select": {"equals": "Not Started"}},
+                {"property": "Type",   "select": {"does_not_equal": "👤 Manual"}},
             ]
         },
         "sorts": [
