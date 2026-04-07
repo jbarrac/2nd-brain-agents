@@ -131,12 +131,14 @@ def update_task(task_id, result_text, task_type):
     payload = {
         "properties": {
             "Status": {"select": {"name": "In Progress"}},
-            "Agent Result": {
+            "Agent Result ": {
                 "rich_text": [{"type": "text", "text": {"content": full_result[:2000]}}]
             }
         }
     }
     response = requests.patch(url, headers=NOTION_HEADERS, json=payload)
+    if not response.ok:
+        print(f"❌ Notion update error {response.status_code}: {response.text}")
     response.raise_for_status()
     print(f"✅ Tarea actualizada en Notion: {task_id}")
 
