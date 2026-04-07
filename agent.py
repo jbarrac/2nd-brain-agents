@@ -137,14 +137,15 @@ def update_task(task_id, result_text, task_type):
     emoji = "🤖" if task_type == "🤖 Agent" else "⚙️"
     action = "Ejecutado" if task_type == "🤖 Agent" else "Preparado"
 
-    full_result = f"{emoji} {action} por agente — {timestamp}\n{'─'*40}\n{result_text}"
+    header = f"{emoji} {action} por agente — {timestamp}\n{'─'*40}\n"
+    full_result = header + result_text[:2000 - len(header)]
 
     url = f"https://api.notion.com/v1/pages/{task_id}"
     payload = {
         "properties": {
             FIELDS["status"]: {"select": {"name": "In Progress"}},
             FIELDS["result"]: {
-                "rich_text": [{"type": "text", "text": {"content": full_result[:2000]}}]
+                "rich_text": [{"type": "text", "text": {"content": full_result}}]
             }
         }
     }
