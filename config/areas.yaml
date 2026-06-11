@@ -1,0 +1,77 @@
+# Activar un área = poner active: true. Gate: KPIs definidos (T2–T7).
+# notion_page_id = página del área en Life Areas [DB]; agent.py lo usa para
+# mapear la relación "Life Area (Link)" de cada tarea a su bloque de config.
+
+internal:
+  name: "🔧 Internal"
+  notion_page_id: "3329982c-113c-8004-9e1f-fe949345cab4"
+  active: true
+  mission: >
+    Mantener el 2nd Brain operativo y simple: integridad de datos, dashboard
+    actualizado, detección de tareas estancadas, propuestas de mejora acotadas.
+  kpis: "Tareas Blocked < 5; 0 tareas In Progress > 7 días; dashboard < 7 días de antigüedad"
+  constraints: >
+    Presupuesto de complejidad: máx 3 workflows, 5 scripts, 1 DB nueva/trimestre.
+    Toda mejora que lo exceda debe proponer qué eliminar primero.
+
+professional:
+  name: "💼 Professional"
+  notion_page_id: "3309982c-113c-80c5-a58a-ee8c9911604e"
+  active: false   # activar al cerrar su KPI (T2–T7)
+  mission: >
+    Preparar el trabajo de Javi como Director de R&D en Facephi: research de
+    regulación (eIDAS, AI Act, biometría UE), drafts de documentos, síntesis.
+  kpis: "PENDIENTE — definir en T2–T7"
+  constraints: >
+    Nunca enviar nada externamente. Todo output es borrador para revisión.
+    No incluir información confidencial de Facephi en búsquedas web.
+
+health:
+  name: "💪 Health"
+  notion_page_id: "3309982c-113c-80f4-8ea8-f43fa3a0a7f0"
+  active: false
+  mission: >
+    Resumir métricas de Apple Health, comparar contra KPIs, generar la sección
+    Health del Weekly Self-Assessment, alertar desvíos como tareas 🟢.
+  kpis: "PENDIENTE — definir en T2–T7"
+  constraints: >
+    Solo informa y sugiere; nunca da consejo médico. Desvíos persistentes →
+    tarea 👤 'consultar profesional'.
+
+mental:
+  name: "🧠 Mental"
+  notion_page_id: "3309982c-113c-80e5-b10b-dad1ce338289"
+  active: false
+  mission: >
+    Generar prompts de reflexión semanales a partir del Mindset DB y la última
+    Weekly Self-Assessment. Detectar patrones entre semanas.
+  kpis: "PENDIENTE"
+  constraints: "Tono neutro. Señala patrones, no diagnostica."
+
+finance:
+  name: "💰 Finance"
+  notion_page_id: "3309982c-113c-80a6-8468-cf4f48d0a9c1"
+  active: false
+  mission: >
+    Recordatorios y checklists de revisión periódica. Preparar análisis solo
+    sobre datos que Javi cargue explícitamente.
+  kpis: "PENDIENTE"
+  constraints: >
+    PROHIBIDO: recomendaciones de inversión, operaciones, acceso a cuentas.
+    Solo organización y recordatorios.
+
+social:
+  name: "👥 Social"
+  notion_page_id: "3309982c-113c-805b-a5c1-fb01aa29c2a2"
+  active: false
+  mission: "Recordatorios de contacto y sugerencias de planes ligadas a Goals."
+  kpis: "PENDIENTE"
+  constraints: "Solo crea tareas 🟢 Baja. Nunca contacta a nadie."
+
+free_time:
+  name: "🎸 Free Time"
+  notion_page_id: "3309982c-113c-8020-8bdb-d07fb3625d79"
+  active: false
+  mission: "Sugerencias de ocio alineadas con Goals; proteger tiempo libre en el Timetable."
+  kpis: "PENDIENTE"
+  constraints: "Solo sugiere. Máx 2 propuestas/semana."
