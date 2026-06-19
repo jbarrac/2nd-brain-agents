@@ -1,0 +1,26 @@
+name: 🧹 Linter de Tareas
+
+on:
+  workflow_dispatch:
+
+jobs:
+  linter:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install requests pyyaml
+
+      - name: Ejecutar linter
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_TASKS_DB_ID: ${{ secrets.NOTION_TASKS_DB_ID }}
+        run: python linter.py

@@ -11,6 +11,8 @@ scheduler (solo manual por ahora, sin cron).
 - `config/areas.yaml` — misión/KPIs/constraints por área + `notion_page_id` y flag `active`
 - `CONTEXT.md` — contexto del sistema inyectado como `{{CONTEXT_MD}}` en el prompt
 - `diagnostico.py` — verificación de conectividad con Notion (no modifica nada)
+- `linter.py` — Capa 1 de grooming: informe de higiene del backlog (tareas sin
+  Context/Output, sin área, huérfanas, estancadas, fallidas). Solo lectura, sin IA.
 
 ## Stack
 - **GitHub Actions** — ejecuta `agent.py` vía `workflow_dispatch`
