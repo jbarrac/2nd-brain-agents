@@ -19,7 +19,9 @@ from anthropic import Anthropic
 
 REPO_ROOT     = Path(__file__).parent
 NOTION_TOKEN  = os.environ["NOTION_TOKEN"]
-TASKS_DB_ID   = os.environ.get("NOTION_TASKS_DB_ID", "067cbf54b7e741b09e059291a44a31c1")
+# `or` (no `.get` default): el workflow pasa el secret aunque no exista, dejando
+# la variable como string vacío en vez de ausente.
+TASKS_DB_ID   = os.environ.get("NOTION_TASKS_DB_ID") or "067cbf54b7e741b09e059291a44a31c1"
 MODEL         = "claude-sonnet-4-6"
 MAX_ATTEMPTS  = 3
 RESULT_LIMIT  = 2000   # límite de un bloque rich_text en Notion
