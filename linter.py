@@ -31,6 +31,7 @@ FIELDS = {
     "task":     "Task",
     "status":   "Status",
     "type":     "Type",
+    "priority": "Priority",
     "context":  "Context",
     "output":   "Output (Expected)",
     "area":     "Life Area (Link)",
@@ -81,6 +82,7 @@ def parse(task):
         "url":      task["url"],
         "status":   select(FIELDS["status"]),
         "type":     select(FIELDS["type"]),
+        "priority": select(FIELDS["priority"]),
         "context":  text(FIELDS["context"]),
         "output":   text(FIELDS["output"]),
         "area_ids": relation(FIELDS["area"]),
@@ -124,6 +126,21 @@ def main():
     active_areas = load_active_area_ids()
     open_tasks = [t for t in tasks if t["status"] in ("Not Started", "In Progress")]
     print(f"📋 Tareas totales: {len(tasks)}  |  abiertas (Not Started / In Progress): {len(open_tasks)}")
+
+    # ── Foco: prioridad alta (Capa 2 empieza aquí) ────────────────────────────
+    high = sorted([t for t in open_tasks if t["priority"] == "🔴 Alta"], key=lambda t: t["title"])
+    print(f"\n{'═' * 50}")
+    print(f"🔴 PRIORIDAD ALTA — revisión ({len(high)} abiertas)")
+    print(f"{'═' * 50}")
+    for t in high:
+        gaps = []
+        if not t["context"]:
+            gaps.append("sin Context")
+        if not t["output"]:
+            gaps.append("sin Output")
+        if not t["goal_ids"] and not t["proj_ids"]:
+            gaps.append("huérfana")
+        print(f"   {'✅ OK    ' if not gaps else '⚠️  ' + ', '.join(gaps)} — {t['title']}")
 
     no_context   = [t for t in open_tasks if not t["context"]]
     no_output    = [t for t in open_tasks if not t["output"]]
