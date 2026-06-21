@@ -142,6 +142,16 @@ def main():
             gaps.append("huérfana")
         print(f"   {'✅ OK    ' if not gaps else '⚠️  ' + ', '.join(gaps)} — {t['title']}")
 
+    # ── Foco: tareas 🤖 Agent con Context/Output incompletos (worklist Capa 2) ──
+    agent_gaps = [t for t in open_tasks if t["type"] == "🤖 Agent" and (not t["context"] or not t["output"])]
+    print(f"\n{'═' * 50}")
+    print(f"🤖 AGENT con Context/Output incompletos ({len(agent_gaps)})")
+    print(f"{'═' * 50}")
+    for t in agent_gaps:
+        miss = " + ".join(m for m, ok in (("Context", t["context"]), ("Output", t["output"])) if not ok)
+        print(f"   • [falta {miss}] {t['title']}")
+        print(f"     {t['url']}")
+
     no_context   = [t for t in open_tasks if not t["context"]]
     no_output    = [t for t in open_tasks if not t["output"]]
     no_area      = [t for t in open_tasks if not t["area_ids"]]
