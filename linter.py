@@ -53,6 +53,14 @@ FIELDS = {
 
 # ── Notion: lectura de tareas ───────────────────────────────────────────────────
 
+def check_identity():
+    """Confirma qué integración de Notion está conectada (heredado de diagnostico.py)."""
+    r = requests.get("https://api.notion.com/v1/users/me", headers=NOTION_HEADERS)
+    if not r.ok:
+        print(f"❌ Notion auth error {r.status_code}: {r.text}")
+    r.raise_for_status()
+    print(f"🔌 Conectado a Notion como: {r.json().get('name', 'desconocido')}")
+
 def fetch_all_tasks():
     """Pagina la Tasks DB completa (Notion devuelve máx 100 por página)."""
     tasks, cursor = [], None
@@ -89,6 +97,7 @@ def parse(task):
 
     title = "".join(i["plain_text"] for i in props.get(FIELDS["task"], {}).get("title", [])).strip()
     return {
+        "id":       task["id"],
         "title":    title or "(sin título)",
         "url":      task["url"],
         "status":   select(FIELDS["status"]),
@@ -281,12 +290,16 @@ def main():
     print(f"🧹 2nd Brain — Linter de Tareas — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print("=" * 50)
 
+    check_identity()
     tasks = [parse(t) for t in fetch_all_tasks()]
     areas = load_areas()
     active_areas = active_area_ids(areas)
     names = area_name_map(areas)
     open_tasks = [t for t in tasks if t["status"] in ("Not Started", "In Progress")]
     print(f"📋 Tareas totales: {len(tasks)}  |  abiertas (Not Started / In Progress): {len(open_tasks)}")
+
+    by_status = Counter(t["status"] or "(sin estado)" for t in tasks)
+    print("   " + "  ·  ".join(f"{s}: {n}" for s, n in sorted(by_status.items())))
 
     # ── Foco: prioridad alta (Capa 2 empieza aquí) ────────────────────────────
     high = sorted([t for t in open_tasks if t["priority"] == "🔴 Alta"], key=lambda t: t["title"])

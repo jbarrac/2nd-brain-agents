@@ -1,0 +1,32 @@
+name: 🧑‍🌾 Groomer de Tareas
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Solo mostrar propuestas, sin escribir en Notion'
+        type: boolean
+        default: true
+
+jobs:
+  groomer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Preparar tareas
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NOTION_TASKS_DB_ID: ${{ secrets.NOTION_TASKS_DB_ID }}
+        run: python groomer.py ${{ inputs.dry_run && '--dry-run' || '' }}

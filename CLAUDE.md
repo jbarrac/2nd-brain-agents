@@ -10,9 +10,17 @@ scheduler (solo manual por ahora, sin cron).
 - `prompts/executor.md` — prompt parametrizado con variables `{{...}}`
 - `config/areas.yaml` — misión/KPIs/constraints por área + `notion_page_id` y flag `active`
 - `CONTEXT.md` — contexto del sistema inyectado como `{{CONTEXT_MD}}` en el prompt
-- `diagnostico.py` — verificación de conectividad con Notion (no modifica nada)
 - `linter.py` — Capa 1 de grooming: informe de higiene del backlog (tareas sin
-  Context/Output, sin área, huérfanas, estancadas, fallidas). Solo lectura, sin IA.
+  Context/Output, sin área, huérfanas, estancadas, fallidas). Sin IA. Solo lectura,
+  salvo con `--dashboard`, que refresca la sección "Salud del Sistema" en Notion.
+  Absorbió el antiguo `diagnostico.py` (identidad de la integración + desglose por estado).
+- `groomer.py` — Capa 2 (F1): redacta Context/Output de las tareas 🔴 Alta que los
+  tengan **vacíos** y los escribe marcados `[🤖 borrador IA – revisar]`. Nunca
+  sobrescribe ni toca Type/Status/relaciones; si no puede redactar con fundamento
+  devuelve NEEDS_INPUT. Soporta `--dry-run`.
+
+## Workflows (presupuesto Internal: máx 3)
+`scheduler.yml` (executor) · `linter.yml` (higiene + dashboard) · `groomer.yml` (borradores, con input `dry_run`)
 
 ## Stack
 - **GitHub Actions** — ejecuta `agent.py` vía `workflow_dispatch`
