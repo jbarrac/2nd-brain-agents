@@ -19,8 +19,8 @@ jobs:
       - name: Instalar dependencias
         run: pip install requests pyyaml
 
-      - name: Ejecutar linter
+      - name: Ejecutar linter + refrescar dashboard
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_TASKS_DB_ID: ${{ secrets.NOTION_TASKS_DB_ID }}
-        run: python linter.py
+        run: python linter.py --dashboard
