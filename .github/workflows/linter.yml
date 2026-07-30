@@ -2,6 +2,10 @@ name: 🧹 Linter de Tareas
 
 on:
   workflow_dispatch:
+  schedule:
+    # Lunes 05:00 UTC = 07:00 Madrid (verano) / 06:00 (invierno).
+    # Mantiene el KPI "dashboard fresco < 7d" siempre en verde.
+    - cron: "0 5 * * 1"
 
 jobs:
   linter:

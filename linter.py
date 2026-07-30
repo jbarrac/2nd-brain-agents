@@ -46,8 +46,8 @@ FIELDS = {
     "context":  "Context",
     "output":   "Output (Expected)",
     "area":     "Life Area (Link)",
-    "goal":     "Goal",
-    "project":  "Project",
+    "goal":     "Goals (Long Term) [DB]",
+    "project":  "Projects [DB]",
     "attempts": "Attempts",
 }
 
