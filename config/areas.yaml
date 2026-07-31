@@ -9,7 +9,10 @@ internal:
   mission: >
     Mantener el 2nd Brain operativo y simple: integridad de datos, dashboard
     actualizado, detección de tareas estancadas, propuestas de mejora acotadas.
-  kpis: "Tareas Blocked < 5; 0 tareas In Progress > 7 días; dashboard < 7 días de antigüedad"
+  kpis: >
+    Tareas Blocked < 5; 0 tareas In Progress > 7 días; dashboard < 7 días de
+    antigüedad; días/semana trabajando en proyectos personales >= 4/7;
+    checks del sistema semanal (bloque personal) >= 5/7.
   constraints: >
     Presupuesto de complejidad: máx 3 workflows, 5 scripts, 1 DB nueva/trimestre.
     Toda mejora que lo exceda debe proponer qué eliminar primero.
@@ -45,7 +48,9 @@ mental:
   mission: >
     Generar prompts de reflexión semanales a partir del Mindset DB y la última
     Weekly Self-Assessment. Detectar patrones entre semanas.
-  kpis: "PENDIENTE"
+  kpis: >
+    Días con entrada en el Diario de Gratitud >= 3/7 por semana (baseline
+    jun-jul 2026: ~1,4/semana). Fuente: Diario de Gratitud [DB].
   constraints: "Tono neutro. Señala patrones, no diagnostica."
 
 finance:
@@ -73,5 +78,8 @@ free_time:
   notion_page_id: "3309982c-113c-8020-8bdb-d07fb3625d79"
   active: false
   mission: "Sugerencias de ocio alineadas con Goals; proteger tiempo libre en el Timetable."
-  kpis: "PENDIENTE"
+  kpis: >
+    Horas semanales de Instagram a la baja vs la media de las 4 semanas
+    previas. Fuente: campo "Instagram (h)" en Weekly Self-Assessment [DB]
+    (entrada manual desde Screen Time del iPhone).
   constraints: "Solo sugiere. Máx 2 propuestas/semana."

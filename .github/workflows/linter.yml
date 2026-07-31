@@ -28,3 +28,8 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_TASKS_DB_ID: ${{ secrets.NOTION_TASKS_DB_ID }}
         run: python linter.py --dashboard
+
+      - name: Calcular KPIs personales
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: python kpis.py --write
