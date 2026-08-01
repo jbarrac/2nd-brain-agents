@@ -358,11 +358,12 @@ def bloques_serie(sync, idx):
             b.append(_bullet(f"{nombre}: sin lecturas todavía"))
             continue
         fecha, valor = serie[0]
+        chispa = sparkline([v for _, v in reversed(serie[-8:])])
         if len(serie) > 1:
             d = valor - serie[1][1]
             flecha = "▲" if d > 0 else ("▼" if d < 0 else "=")
             b.append(_bullet(
-                f"{nombre}: {valor:g} ({fecha:%d/%m})  ·  {flecha} {abs(d):g} vs "
+                f"{nombre}: {chispa}  {valor:g} ({fecha:%d/%m})  ·  {flecha} {abs(d):g} vs "
                 f"{serie[1][0]:%d/%m}  ·  {len(serie)} lecturas{marca}"))
         else:
             b.append(_bullet(f"{nombre}: {valor:g} ({fecha:%d/%m})  ·  primera lectura{marca}"))
@@ -445,6 +446,105 @@ def build_blocks(lunes, domingo, insta, grat, semana, sync, idx):
             f"la semana completa hasta el lunes.", "⚠️"))
     b.append(_bullet("Días presentes: " + (", ".join(d for d in DIAS if d in dias) or "ninguno")))
     return b + bloques_serie(sync, idx)
+
+# ── Panel de tarjetas (lo primero que se ve al abrir la página) ─────────────────
+
+FIRMA_TARJETAS = "Panel actualizado por kpis.py"
+
+# (KPI, etiqueta corta, emoji, sufijo, objetivo) — objetivo None = "menos es mejor".
+TARJETAS = [
+    (KPI_GRATITUD, "Gratitud",         "🙏", "/7", META_GRATITUD),
+    (KPI_CLAUDE,   "Proy. personales", "💻", "/7", META_CLAUDE),
+    (KPI_CHECKS_P, "Checks personal",  "✅", "/7", META_CHECKS),
+    (KPI_CHECKS_F, "Checks Facephi",   "💼", "%",  70),
+    (KPI_INSTA,    "Instagram",        "📱", " h", None),
+]
+
+
+def sparkline(valores):
+    """Serie como barras de texto. Funciona en plan free: no son imágenes."""
+    if not valores:
+        return ""
+    barras = "▁▂▃▄▅▆▇█"
+    lo, hi = min(valores), max(valores)
+    if hi == lo:
+        return barras[3] * len(valores)
+    return "".join(barras[min(7, int((v - lo) / (hi - lo) * 7.999))] for v in valores)
+
+
+def _tarjeta(etiqueta, emoji, texto, color):
+    return {"object": "block", "type": "callout", "callout": {
+        "rich_text": [_rt(texto)],
+        "icon": {"type": "emoji", "emoji": emoji},
+        "color": color,
+    }}
+
+
+def construir_tarjetas(series, idx):
+    """Una tarjeta por KPI gestionado, en columnas."""
+    columnas = []
+    for nombre, etiqueta, emoji, sufijo, objetivo in TARJETAS:
+        kpi_id = idx.get(nombre)
+        serie = series.get(kpi_id.replace("-", ""), []) if kpi_id else []
+
+        if not serie:
+            texto = f"{etiqueta}\n—\nsin datos"
+            color = "gray_background"
+        else:
+            fecha, valor = serie[0]
+            # La serie viene desc; para el sparkline la queremos cronológica.
+            cronologica = [v for _, v in reversed(serie[-8:])]
+            chispa = sparkline(cronologica)
+
+            if len(serie) > 1:
+                d = valor - serie[1][1]
+                flecha = "▲" if d > 0 else ("▼" if d < 0 else "=")
+                delta = f"{flecha} {abs(d):g}"
+            else:
+                delta = "1ª lectura"
+
+            if objetivo is None:                      # menos es mejor (Instagram)
+                ok = len(serie) > 1 and valor < serie[1][1]
+            else:
+                ok = valor >= objetivo
+            color = "green_background" if ok else "red_background"
+            texto = (f"{etiqueta}\n{valor:g}{sufijo}\n{chispa}\n{delta} · {fecha:%d/%m}")
+
+        columnas.append({"object": "block", "type": "column",
+                         "column": {"children": [_tarjeta(etiqueta, emoji, texto, color)]}})
+
+    return [
+        {"object": "block", "type": "column_list", "column_list": {"children": columnas}},
+        _p(f"{FIRMA_TARJETAS} · {datetime.now():%Y-%m-%d %H:%M}"),
+    ]
+
+
+def write_tarjetas(bloques):
+    """Reemplaza el panel y lo deja arriba del todo. Idempotente.
+
+    El panel gestionado son 2 bloques adyacentes: el column_list y el párrafo de
+    firma que va justo detrás. La firma hace de ancla y de sello de frescura.
+    """
+    hijos = list_block_children(DASHBOARD_PAGE_ID)
+
+    for i, b in enumerate(hijos):
+        if b["type"] == "paragraph" and FIRMA_TARJETAS in plain(b, "paragraph"):
+            requests.delete(f"https://api.notion.com/v1/blocks/{b['id']}",
+                            headers=NOTION_HEADERS).raise_for_status()
+            if i > 0 and hijos[i - 1]["type"] == "column_list":
+                requests.delete(f"https://api.notion.com/v1/blocks/{hijos[i-1]['id']}",
+                                headers=NOTION_HEADERS).raise_for_status()
+            print("♻️  Panel anterior eliminado.")
+            break
+
+    ancla = list_block_children(DASHBOARD_PAGE_ID)[0]["id"]   # tras la cita de intro
+    r = requests.patch(f"https://api.notion.com/v1/blocks/{DASHBOARD_PAGE_ID}/children",
+                       headers=NOTION_HEADERS,
+                       json={"children": bloques, "after": ancla})
+    if not r.ok:
+        print(f"❌ Error escribiendo el panel: {r.status_code} {r.text}")
+    r.raise_for_status()
+    print("✨ Panel de tarjetas publicado arriba del dashboard.")
 
 # ── Escritura idempotente en el dashboard ───────────────────────────────────────
 
@@ -539,7 +639,9 @@ def main():
         print(f"   ❌ sin fila en KPIs [DB] — {nombre}")
 
     print("\n📊 Escribiendo en el dashboard…")
-    write_section(build_blocks(lunes, domingo, insta, grat, semana, sync, kpi_index()))
+    idx = kpi_index()                      # una sola vez: antes se escaneaba dos veces
+    write_tarjetas(construir_tarjetas(series_por_kpi(), idx))
+    write_section(build_blocks(lunes, domingo, insta, grat, semana, sync, idx))
     print(f"🔗 https://app.notion.com/p/{DASHBOARD_PAGE_ID}")
 
 
