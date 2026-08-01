@@ -480,8 +480,20 @@ def _tarjeta(etiqueta, emoji, texto, color):
     }}
 
 
+MAX_POR_FILA = 3   # con 4+ columnas Notion parte las palabras y apila el sparkline
+
+
+def _repartir_en_filas(columnas):
+    """Trocea en filas de MAX_POR_FILA. Un column_list exige >= 2 columnas,
+    así que si la última fila se queda con una sola, se reequilibra."""
+    filas = [columnas[i:i + MAX_POR_FILA] for i in range(0, len(columnas), MAX_POR_FILA)]
+    if len(filas) > 1 and len(filas[-1]) == 1:
+        filas[-1].insert(0, filas[-2].pop())
+    return filas
+
+
 def construir_tarjetas(series, idx):
-    """Una tarjeta por KPI gestionado, en columnas."""
+    """Una tarjeta por KPI gestionado, repartidas en filas legibles."""
     columnas = []
     for nombre, etiqueta, emoji, sufijo, objetivo in TARJETAS:
         kpi_id = idx.get(nombre)
@@ -513,10 +525,10 @@ def construir_tarjetas(series, idx):
         columnas.append({"object": "block", "type": "column",
                          "column": {"children": [_tarjeta(etiqueta, emoji, texto, color)]}})
 
-    return [
-        {"object": "block", "type": "column_list", "column_list": {"children": columnas}},
-        _p(f"{FIRMA_TARJETAS} · {datetime.now():%Y-%m-%d %H:%M}"),
-    ]
+    bloques = [{"object": "block", "type": "column_list", "column_list": {"children": fila}}
+               for fila in _repartir_en_filas(columnas)]
+    bloques.append(_p(f"{FIRMA_TARJETAS} · {datetime.now():%Y-%m-%d %H:%M}"))
+    return bloques
 
 
 def write_tarjetas(bloques):
@@ -531,10 +543,15 @@ def write_tarjetas(bloques):
         if b["type"] == "paragraph" and FIRMA_TARJETAS in plain(b, "paragraph"):
             requests.delete(f"https://api.notion.com/v1/blocks/{b['id']}",
                             headers=NOTION_HEADERS).raise_for_status()
-            if i > 0 and hijos[i - 1]["type"] == "column_list":
-                requests.delete(f"https://api.notion.com/v1/blocks/{hijos[i-1]['id']}",
+            # El panel puede ocupar varias filas: borra todos los column_list
+            # consecutivos que hay justo antes de la firma, no solo el último.
+            borradas, j = 0, i - 1
+            while j >= 0 and hijos[j]["type"] == "column_list":
+                requests.delete(f"https://api.notion.com/v1/blocks/{hijos[j]['id']}",
                                 headers=NOTION_HEADERS).raise_for_status()
-            print("♻️  Panel anterior eliminado.")
+                borradas += 1
+                j -= 1
+            print(f"♻️  Panel anterior eliminado ({borradas} fila(s)).")
             break
 
     ancla = list_block_children(DASHBOARD_PAGE_ID)[0]["id"]   # tras la cita de intro
