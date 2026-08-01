@@ -303,23 +303,21 @@ def sincronizar_readings(lunes, insta, grat, semana):
     return {"creadas": creadas, "saltadas": saltadas, "omitidas": omitir, "sin_kpi": sin_kpi}
 
 
-def historico_kpi(nombre, idx, limite=5):
-    """Últimas lecturas de un KPI, más recientes primero."""
-    kpi_id = idx.get(nombre)
-    if not kpi_id:
-        return []
-    serie = []
+def series_por_kpi():
+    """{kpi_id: [(fecha, valor), …] desc}. Una sola pasada por la DB."""
+    series = {}
     for row in query_db(READINGS_DB_ID):
         props = row["properties"]
-        ids = [r["id"].replace("-", "") for r in props.get("KPI", {}).get("relation", [])]
-        if kpi_id.replace("-", "") not in ids:
-            continue
         f = (props.get("Fecha", {}).get("date") or {}).get("start")
         v = props.get("Valor", {}).get("number")
-        if f and v is not None:
-            serie.append((datetime.fromisoformat(f[:10]).date(), v))
-    serie.sort(reverse=True)
-    return serie[:limite]
+        if not f or v is None:
+            continue
+        for rel in props.get("KPI", {}).get("relation", []):
+            series.setdefault(rel["id"].replace("-", ""), []).append(
+                (datetime.fromisoformat(f[:10]).date(), v))
+    for k in series:
+        series[k].sort(reverse=True)
+    return series
 
 # ── Bloques Notion ──────────────────────────────────────────────────────────────
 
@@ -343,23 +341,32 @@ def _callout(text, emoji):
 
 
 def bloques_serie(sync, idx):
-    """Sección que refleja la serie temporal: qué se registró y qué no."""
-    b = [_h2("🗂️ Serie temporal · KPI Readings")]
+    """Estado actual de la serie temporal de cada KPI gestionado.
 
-    if sync["creadas"]:
-        b.append(_p("Lecturas registradas esta semana:", bold=True))
-        for nombre, valor in sync["creadas"]:
-            hist = historico_kpi(nombre, idx)
-            if len(hist) > 1:
-                previo = hist[1][1]
-                d = valor - previo
-                flecha = "▲" if d > 0 else ("▼" if d < 0 else "=")
-                b.append(_bullet(f"{nombre}: {valor:g}  ({flecha} {abs(d):g} vs {hist[1][0]:%d/%m})"))
-            else:
-                b.append(_bullet(f"{nombre}: {valor:g}  (primera lectura)"))
-    if sync["saltadas"]:
-        b.append(_bullet("Ya registradas antes (no duplicadas): "
-                         + ", ".join(sync["saltadas"])))
+    Reporta el ESTADO (última lectura y tendencia), no solo lo que hizo esta
+    ejecución: si la lectura ya existía, los números deben verse igualmente.
+    """
+    b = [_h2("🗂️ Serie temporal · KPI Readings")]
+    series = series_por_kpi()
+    nuevas = {n for n, _ in sync["creadas"]}
+
+    for nombre in (KPI_GRATITUD, KPI_CLAUDE, KPI_CHECKS_P, KPI_CHECKS_F, KPI_INSTA):
+        kpi_id = idx.get(nombre)
+        serie = series.get(kpi_id.replace("-", ""), []) if kpi_id else []
+        marca = "  ✳️ nueva" if nombre in nuevas else ""
+        if not serie:
+            b.append(_bullet(f"{nombre}: sin lecturas todavía"))
+            continue
+        fecha, valor = serie[0]
+        if len(serie) > 1:
+            d = valor - serie[1][1]
+            flecha = "▲" if d > 0 else ("▼" if d < 0 else "=")
+            b.append(_bullet(
+                f"{nombre}: {valor:g} ({fecha:%d/%m})  ·  {flecha} {abs(d):g} vs "
+                f"{serie[1][0]:%d/%m}  ·  {len(serie)} lecturas{marca}"))
+        else:
+            b.append(_bullet(f"{nombre}: {valor:g} ({fecha:%d/%m})  ·  primera lectura{marca}"))
+
     if sync["omitidas"]:
         b.append(_callout(
             "No medibles esta semana — se deja hueco en la serie en vez de un dato falso:\n"
