@@ -25,8 +25,19 @@ NOTION_TOKEN      = os.environ["NOTION_TOKEN"]
 WEEKLY_DB_ID      = "4e203fe2bba44bbb9be4be71eb669098"   # Weekly Self-Assessment [DB]
 GRATITUD_DB_ID    = "c726a373ea4e49bf8b85197ae0cddebd"   # Diario de Gratitud [DB]
 PLANNING_PAGE_ID  = "2ed9982c113c809a9186eca7c1f79385"   # Sistema: Planificación Semanal
-DASHBOARD_PAGE_ID = "35f9982c113c8125afebc842bef78dae"   # 📊 Goals & KPIs Dashboard
-SENTINEL          = "📈 KPIs Personales"                  # marca del bloque gestionado
+DASHBOARD_PAGE_ID = "35f9982c113c8125afebc842bef78dae"   # 📊 Dashboard (Main KPIs)
+KPIS_DB_ID        = "3ae9982c113c80719d03e543f608f4c2"   # KPIs [DB] — definiciones
+READINGS_DB_ID    = "c72ead033113467fad46bc8dc0de71d3"   # KPI Readings [DB] — serie temporal
+
+SENTINEL   = "📈 KPIs Personales"          # título del bloque gestionado (editable por Javi)
+FIRMA      = "por kpis.py"                 # marca en el contenido: ancla real, no la toca nadie
+
+# Nombres exactos de las filas en KPIs [DB] que este script alimenta.
+KPI_GRATITUD = "Días con entrada en Diario de Gratitud"
+KPI_CLAUDE   = "Días trabajando en proyectos personales"
+KPI_CHECKS_P = "Checks sistema semanal (personal)"
+KPI_CHECKS_F = "Checks sistema semanal (Facephi)"
+KPI_INSTA    = "Horas de Instagram"
 
 # Objetivos (espejo de config/areas.yaml — si cambian allí, cambian aquí)
 META_GRATITUD = 3   # días/semana con entrada
@@ -190,6 +201,126 @@ def parse_semana_actual():
 
     return {"titulo": titulo, "dias": dias, "claude_dias": claude_dias}
 
+# ── KPI Readings: escritura de la serie temporal ────────────────────────────────
+
+def kpi_index():
+    """{nombre: page_id} de las filas de KPIs [DB]."""
+    idx = {}
+    for row in query_db(KPIS_DB_ID):
+        nombre = "".join(i["plain_text"] for i in
+                         row["properties"].get("Nombre", {}).get("title", [])).strip()
+        if nombre:
+            idx[nombre] = row["id"]
+    return idx
+
+
+def readings_de_fecha(fecha):
+    """ids de KPI que YA tienen lectura en esa fecha (para no duplicar)."""
+    ya = set()
+    for row in query_db(READINGS_DB_ID):
+        props = row["properties"]
+        f = (props.get("Fecha", {}).get("date") or {}).get("start")
+        if f and f[:10] == fecha.isoformat():
+            for rel in props.get("KPI", {}).get("relation", []):
+                ya.add(rel["id"].replace("-", ""))
+    return ya
+
+
+def crear_reading(kpi_id, nombre, fecha, valor, nota=None):
+    props = {
+        "Registro": {"title": [{"text": {"content": f"{nombre} · {fecha.isoformat()}"[:2000]}}]},
+        "Fecha":    {"date": {"start": fecha.isoformat()}},
+        "KPI":      {"relation": [{"id": kpi_id}]},
+        "Valor":    {"number": valor},
+    }
+    if nota:
+        props["Notas"] = {"rich_text": [{"text": {"content": nota[:2000]}}]}
+    r = requests.post("https://api.notion.com/v1/pages", headers=NOTION_HEADERS,
+                      json={"parent": {"database_id": READINGS_DB_ID}, "properties": props})
+    if not r.ok:
+        print(f"❌ Error creando lectura '{nombre}': {r.status_code} {r.text}")
+    r.raise_for_status()
+
+
+def valores_de_la_semana(insta, grat, semana):
+    """Qué se puede medir esta semana y qué no.
+
+    Higiene de datos: si faltan días en la plantilla, los KPIs que salen de ella
+    quedan incompletos. Preferimos un hueco en la serie a un dato falso, así que
+    esos se omiten con motivo en vez de escribirse.
+    """
+    escribir, omitir = [], []
+
+    # Gratitud: fuente independiente (su propia DB) → siempre medible.
+    escribir.append((KPI_GRATITUD, float(grat["dias"]), None))
+
+    # Instagram: manual; solo si Javi ha rellenado el campo.
+    if insta["estado"] == "ok":
+        escribir.append((KPI_INSTA, float(insta["horas"]), None))
+    else:
+        omitir.append((KPI_INSTA, "sin dato en Weekly Self-Assessment"))
+
+    # Los 3 que salen de la plantilla semanal exigen la semana completa.
+    if not semana:
+        for k in (KPI_CHECKS_P, KPI_CHECKS_F, KPI_CLAUDE):
+            omitir.append((k, "no se encontró la sección de la semana"))
+        return escribir, omitir
+
+    dias = semana["dias"]
+    if len(dias) < 7:
+        motivo = f"semana incompleta ({len(dias)}/7 días en la plantilla)"
+        for k in (KPI_CHECKS_P, KPI_CHECKS_F, KPI_CLAUDE):
+            omitir.append((k, motivo))
+        return escribir, omitir
+
+    completos = sum(1 for v in dias.values()
+                    if v["personal"][1] and v["personal"][0] == v["personal"][1])
+    fac_ok  = sum(v["facephi"][0] for v in dias.values())
+    fac_tot = sum(v["facephi"][1] for v in dias.values())
+    escribir.append((KPI_CHECKS_P, float(completos), "días con el bloque personal completo"))
+    escribir.append((KPI_CHECKS_F, round(100 * fac_ok / fac_tot, 1) if fac_tot else 0.0, "% de checks"))
+    escribir.append((KPI_CLAUDE, float(semana["claude_dias"]), None))
+    return escribir, omitir
+
+
+def sincronizar_readings(lunes, insta, grat, semana):
+    """Escribe las lecturas de la semana. Idempotente: no duplica si ya existen."""
+    idx = kpi_index()
+    ya  = readings_de_fecha(lunes)
+    escribir, omitir = valores_de_la_semana(insta, grat, semana)
+
+    creadas, saltadas, sin_kpi = [], [], []
+    for nombre, valor, nota in escribir:
+        kpi_id = idx.get(nombre)
+        if not kpi_id:
+            sin_kpi.append(nombre)
+            continue
+        if kpi_id.replace("-", "") in ya:
+            saltadas.append(nombre)
+            continue
+        crear_reading(kpi_id, nombre, lunes, valor, nota)
+        creadas.append((nombre, valor))
+    return {"creadas": creadas, "saltadas": saltadas, "omitidas": omitir, "sin_kpi": sin_kpi}
+
+
+def historico_kpi(nombre, idx, limite=5):
+    """Últimas lecturas de un KPI, más recientes primero."""
+    kpi_id = idx.get(nombre)
+    if not kpi_id:
+        return []
+    serie = []
+    for row in query_db(READINGS_DB_ID):
+        props = row["properties"]
+        ids = [r["id"].replace("-", "") for r in props.get("KPI", {}).get("relation", [])]
+        if kpi_id.replace("-", "") not in ids:
+            continue
+        f = (props.get("Fecha", {}).get("date") or {}).get("start")
+        v = props.get("Valor", {}).get("number")
+        if f and v is not None:
+            serie.append((datetime.fromisoformat(f[:10]).date(), v))
+    serie.sort(reverse=True)
+    return serie[:limite]
+
 # ── Bloques Notion ──────────────────────────────────────────────────────────────
 
 def _rt(content, bold=False):
@@ -211,7 +342,35 @@ def _callout(text, emoji):
             "callout": {"rich_text": [_rt(text)], "icon": {"type": "emoji", "emoji": emoji}}}
 
 
-def build_blocks(lunes, domingo, insta, grat, semana):
+def bloques_serie(sync, idx):
+    """Sección que refleja la serie temporal: qué se registró y qué no."""
+    b = [_h2("🗂️ Serie temporal · KPI Readings")]
+
+    if sync["creadas"]:
+        b.append(_p("Lecturas registradas esta semana:", bold=True))
+        for nombre, valor in sync["creadas"]:
+            hist = historico_kpi(nombre, idx)
+            if len(hist) > 1:
+                previo = hist[1][1]
+                d = valor - previo
+                flecha = "▲" if d > 0 else ("▼" if d < 0 else "=")
+                b.append(_bullet(f"{nombre}: {valor:g}  ({flecha} {abs(d):g} vs {hist[1][0]:%d/%m})"))
+            else:
+                b.append(_bullet(f"{nombre}: {valor:g}  (primera lectura)"))
+    if sync["saltadas"]:
+        b.append(_bullet("Ya registradas antes (no duplicadas): "
+                         + ", ".join(sync["saltadas"])))
+    if sync["omitidas"]:
+        b.append(_callout(
+            "No medibles esta semana — se deja hueco en la serie en vez de un dato falso:\n"
+            + "\n".join(f"• {n} — {motivo}" for n, motivo in sync["omitidas"]), "⚠️"))
+    if sync["sin_kpi"]:
+        b.append(_callout("Sin fila en KPIs [DB] (no se puede registrar): "
+                          + ", ".join(sync["sin_kpi"]), "🔴"))
+    return b
+
+
+def build_blocks(lunes, domingo, insta, grat, semana, sync, idx):
     now = datetime.now()
     b = [_p(f"Actualizado automáticamente por kpis.py · {now:%Y-%m-%d %H:%M}  ·  "
             f"semana {lunes:%d/%m} – {domingo:%d/%m}")]
@@ -245,7 +404,7 @@ def build_blocks(lunes, domingo, insta, grat, semana):
     if not semana:
         b.append(_callout("No se encontró ninguna sección \"Semana …\" en la página de "
                           "Planificación Semanal.", "🔴"))
-        return b
+        return b + bloques_serie(sync, idx)
 
     dias = semana["dias"]
     presentes = len(dias)
@@ -278,17 +437,31 @@ def build_blocks(lunes, domingo, insta, grat, semana):
             f"borrados no se pueden contar. Para que la métrica sea fiable, conserva "
             f"la semana completa hasta el lunes.", "⚠️"))
     b.append(_bullet("Días presentes: " + (", ".join(d for d in DIAS if d in dias) or "ninguno")))
-    return b
+    return b + bloques_serie(sync, idx)
 
 # ── Escritura idempotente en el dashboard ───────────────────────────────────────
 
+def find_managed_toggle():
+    """Localiza el bloque gestionado en el dashboard.
+
+    Ancla primaria: el título. Ancla secundaria: la FIRMA que el propio script
+    escribe en su primer párrafo — sobrevive a que se renombre o se convierta el
+    título en un enlace, que es justo lo que pasó el 31/07/2026.
+    """
+    for b in list_block_children(DASHBOARD_PAGE_ID):
+        if b["type"] != "toggle":
+            continue
+        if SENTINEL in plain(b, "toggle"):
+            return b["id"]
+        if b.get("has_children"):
+            for hijo in list_block_children(b["id"])[:3]:
+                if hijo["type"] == "paragraph" and FIRMA in plain(hijo, "paragraph"):
+                    return b["id"]
+    return None
+
+
 def write_section(blocks):
-    hijos = list_block_children(DASHBOARD_PAGE_ID)
-    toggle_id = None
-    for b in hijos:
-        if b["type"] == "toggle" and plain(b, "toggle").startswith(SENTINEL):
-            toggle_id = b["id"]
-            break
+    toggle_id = find_managed_toggle()
 
     if toggle_id:
         for hijo in list_block_children(toggle_id):
@@ -347,8 +520,19 @@ def main():
         print("\nℹ️  Modo lectura. Usa --write para publicar en el dashboard.")
         return
 
-    print("\n📊 Escribiendo en Notion…")
-    write_section(build_blocks(lunes, domingo, insta, grat, semana))
+    print("\n🗂️  Sincronizando KPI Readings…")
+    sync = sincronizar_readings(lunes, insta, grat, semana)
+    for nombre, valor in sync["creadas"]:
+        print(f"   ✅ lectura creada — {nombre}: {valor:g}")
+    for nombre in sync["saltadas"]:
+        print(f"   ⏭️  ya existía — {nombre}")
+    for nombre, motivo in sync["omitidas"]:
+        print(f"   ⚠️  omitida — {nombre} ({motivo})")
+    for nombre in sync["sin_kpi"]:
+        print(f"   ❌ sin fila en KPIs [DB] — {nombre}")
+
+    print("\n📊 Escribiendo en el dashboard…")
+    write_section(build_blocks(lunes, domingo, insta, grat, semana, sync, kpi_index()))
     print(f"🔗 https://app.notion.com/p/{DASHBOARD_PAGE_ID}")
 
 
