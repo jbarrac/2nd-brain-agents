@@ -32,12 +32,12 @@ READINGS_DB_ID    = "c72ead033113467fad46bc8dc0de71d3"   # KPI Readings [DB] —
 SENTINEL   = "📈 KPIs Personales"          # título del bloque gestionado (editable por Javi)
 FIRMA      = "por kpis.py"                 # marca en el contenido: ancla real, no la toca nadie
 
-# Nombres exactos de las filas en KPIs [DB] que este script alimenta.
-KPI_GRATITUD = "Días con entrada en Diario de Gratitud"
-KPI_CLAUDE   = "Días trabajando en proyectos personales"
-KPI_CHECKS_P = "Checks sistema semanal (personal)"
-KPI_CHECKS_F = "Checks sistema semanal (Facephi)"
-KPI_INSTA    = "Horas de Instagram"
+# Ancla = columna `Clave` de KPIs [DB], no el nombre. El nombre es de Javi y lo
+# retoca; la Clave es el contrato con este script y no se renombra nunca.
+CLAVE_GRATITUD = "gratitud_dias"
+CLAVE_CLAUDE   = "proyectos_personales"
+CLAVE_CHECKS   = "checks_semanal"    # Javi fusionó personal + Facephi en un KPI
+CLAVE_INSTA    = "instagram_horas"
 
 # Objetivos (espejo de config/areas.yaml — si cambian allí, cambian aquí)
 META_GRATITUD = 3   # días/semana con entrada
@@ -204,13 +204,20 @@ def parse_semana_actual():
 # ── KPI Readings: escritura de la serie temporal ────────────────────────────────
 
 def kpi_index():
-    """{nombre: page_id} de las filas de KPIs [DB]."""
+    """{clave: {'id', 'nombre'}} de las filas de KPIs [DB] que tienen Clave.
+
+    Solo entran las filas con `Clave` rellena: es la señal explícita de que el
+    dashboard gestiona ese KPI. Sin Clave, el script lo ignora.
+    """
     idx = {}
     for row in query_db(KPIS_DB_ID):
+        props = row["properties"]
+        clave = "".join(i["plain_text"] for i in
+                        props.get("Clave", {}).get("rich_text", [])).strip()
         nombre = "".join(i["plain_text"] for i in
-                         row["properties"].get("Nombre", {}).get("title", [])).strip()
-        if nombre:
-            idx[nombre] = row["id"]
+                         props.get("Nombre", {}).get("title", [])).strip()
+        if clave:
+            idx[clave] = {"id": row["id"], "nombre": nombre}
     return idx
 
 
@@ -252,34 +259,33 @@ def valores_de_la_semana(insta, grat, semana):
     escribir, omitir = [], []
 
     # Gratitud: fuente independiente (su propia DB) → siempre medible.
-    escribir.append((KPI_GRATITUD, float(grat["dias"]), None))
+    escribir.append((CLAVE_GRATITUD, float(grat["dias"]), None))
 
     # Instagram: manual; solo si Javi ha rellenado el campo.
     if insta["estado"] == "ok":
-        escribir.append((KPI_INSTA, float(insta["horas"]), None))
+        escribir.append((CLAVE_INSTA, float(insta["horas"]), None))
     else:
-        omitir.append((KPI_INSTA, "sin dato en Weekly Self-Assessment"))
+        omitir.append((CLAVE_INSTA, "sin dato en Weekly Self-Assessment"))
 
-    # Los 3 que salen de la plantilla semanal exigen la semana completa.
+    # Los 2 que salen de la plantilla semanal exigen la semana completa.
     if not semana:
-        for k in (KPI_CHECKS_P, KPI_CHECKS_F, KPI_CLAUDE):
+        for k in (CLAVE_CHECKS, CLAVE_CLAUDE):
             omitir.append((k, "no se encontró la sección de la semana"))
         return escribir, omitir
 
     dias = semana["dias"]
     if len(dias) < 7:
         motivo = f"semana incompleta ({len(dias)}/7 días en la plantilla)"
-        for k in (KPI_CHECKS_P, KPI_CHECKS_F, KPI_CLAUDE):
+        for k in (CLAVE_CHECKS, CLAVE_CLAUDE):
             omitir.append((k, motivo))
         return escribir, omitir
 
-    completos = sum(1 for v in dias.values()
-                    if v["personal"][1] and v["personal"][0] == v["personal"][1])
-    fac_ok  = sum(v["facephi"][0] for v in dias.values())
-    fac_tot = sum(v["facephi"][1] for v in dias.values())
-    escribir.append((KPI_CHECKS_P, float(completos), "días con el bloque personal completo"))
-    escribir.append((KPI_CHECKS_F, round(100 * fac_ok / fac_tot, 1) if fac_tot else 0.0, "% de checks"))
-    escribir.append((KPI_CLAUDE, float(semana["claude_dias"]), None))
+    # KPI fusionado: % sobre TODOS los checks de la semana (personal + Facephi).
+    ok  = sum(v["personal"][0] + v["facephi"][0] for v in dias.values())
+    tot = sum(v["personal"][1] + v["facephi"][1] for v in dias.values())
+    escribir.append((CLAVE_CHECKS, round(100 * ok / tot, 1) if tot else 0.0,
+                     f"{ok}/{tot} checks (personal + Facephi)"))
+    escribir.append((CLAVE_CLAUDE, float(semana["claude_dias"]), None))
     return escribir, omitir
 
 
@@ -290,16 +296,16 @@ def sincronizar_readings(lunes, insta, grat, semana):
     escribir, omitir = valores_de_la_semana(insta, grat, semana)
 
     creadas, saltadas, sin_kpi = [], [], []
-    for nombre, valor, nota in escribir:
-        kpi_id = idx.get(nombre)
-        if not kpi_id:
-            sin_kpi.append(nombre)
+    for clave, valor, nota in escribir:
+        kpi = idx.get(clave)
+        if not kpi:
+            sin_kpi.append(clave)
             continue
-        if kpi_id.replace("-", "") in ya:
-            saltadas.append(nombre)
+        if kpi["id"].replace("-", "") in ya:
+            saltadas.append(kpi["nombre"])
             continue
-        crear_reading(kpi_id, nombre, lunes, valor, nota)
-        creadas.append((nombre, valor))
+        crear_reading(kpi["id"], kpi["nombre"], lunes, valor, nota)
+        creadas.append((clave, valor))
     return {"creadas": creadas, "saltadas": saltadas, "omitidas": omitir, "sin_kpi": sin_kpi}
 
 
@@ -348,12 +354,13 @@ def bloques_serie(sync, idx):
     """
     b = [_h2("🗂️ Serie temporal · KPI Readings")]
     series = series_por_kpi()
-    nuevas = {n for n, _ in sync["creadas"]}
+    nuevas = {c for c, _ in sync["creadas"]}
 
-    for nombre in (KPI_GRATITUD, KPI_CLAUDE, KPI_CHECKS_P, KPI_CHECKS_F, KPI_INSTA):
-        kpi_id = idx.get(nombre)
-        serie = series.get(kpi_id.replace("-", ""), []) if kpi_id else []
-        marca = "  ✳️ nueva" if nombre in nuevas else ""
+    for clave in (CLAVE_GRATITUD, CLAVE_CLAUDE, CLAVE_CHECKS, CLAVE_INSTA):
+        kpi = idx.get(clave)
+        nombre = kpi["nombre"] if kpi else clave
+        serie = series.get(kpi["id"].replace("-", ""), []) if kpi else []
+        marca = "  ✳️ nueva" if clave in nuevas else ""
         if not serie:
             b.append(_bullet(f"{nombre}: sin lecturas todavía"))
             continue
@@ -451,13 +458,13 @@ def build_blocks(lunes, domingo, insta, grat, semana, sync, idx):
 
 FIRMA_TARJETAS = "Panel actualizado por kpis.py"
 
-# (KPI, etiqueta corta, emoji, sufijo, objetivo) — objetivo None = "menos es mejor".
+# (clave, etiqueta corta, emoji, sufijo, objetivo) — objetivo None = "menos es mejor".
+# La etiqueta es corta a propósito: con nombres largos Notion parte las palabras.
 TARJETAS = [
-    (KPI_GRATITUD, "Gratitud",         "🙏", "/7", META_GRATITUD),
-    (KPI_CLAUDE,   "Proy. personales", "💻", "/7", META_CLAUDE),
-    (KPI_CHECKS_P, "Checks personal",  "✅", "/7", META_CHECKS),
-    (KPI_CHECKS_F, "Checks Facephi",   "💼", "%",  70),
-    (KPI_INSTA,    "Instagram",        "📱", " h", None),
+    (CLAVE_GRATITUD, "Gratitud",         "🙏", "/7", META_GRATITUD),
+    (CLAVE_CLAUDE,   "Proy. personales", "💻", "/7", META_CLAUDE),
+    (CLAVE_CHECKS,   "Checks semanal",   "✅", "%",  70),
+    (CLAVE_INSTA,    "Instagram",        "📱", " h", None),
 ]
 
 
@@ -495,9 +502,9 @@ def _repartir_en_filas(columnas):
 def construir_tarjetas(series, idx):
     """Una tarjeta por KPI gestionado, repartidas en filas legibles."""
     columnas = []
-    for nombre, etiqueta, emoji, sufijo, objetivo in TARJETAS:
-        kpi_id = idx.get(nombre)
-        serie = series.get(kpi_id.replace("-", ""), []) if kpi_id else []
+    for clave, etiqueta, emoji, sufijo, objetivo in TARJETAS:
+        kpi = idx.get(clave)
+        serie = series.get(kpi["id"].replace("-", ""), []) if kpi else []
 
         if not serie:
             texto = f"{etiqueta}\n—\nsin datos"
