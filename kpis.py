@@ -376,9 +376,10 @@ def bloques_serie(sync, idx):
             b.append(_bullet(f"{nombre}: {valor:g} ({fecha:%d/%m})  ·  primera lectura{marca}"))
 
     if sync["omitidas"]:
+        legible = lambda c: idx[c]["nombre"] if c in idx else c
         b.append(_callout(
             "No medibles esta semana — se deja hueco en la serie en vez de un dato falso:\n"
-            + "\n".join(f"• {n} — {motivo}" for n, motivo in sync["omitidas"]), "⚠️"))
+            + "\n".join(f"• {legible(c)} — {motivo}" for c, motivo in sync["omitidas"]), "⚠️"))
     if sync["sin_kpi"]:
         b.append(_callout("Sin fila en KPIs [DB] (no se puede registrar): "
                           + ", ".join(sync["sin_kpi"]), "🔴"))
