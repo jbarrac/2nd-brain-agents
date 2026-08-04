@@ -24,7 +24,7 @@ import requests
 NOTION_TOKEN      = os.environ["NOTION_TOKEN"]
 WEEKLY_DB_ID      = "4e203fe2bba44bbb9be4be71eb669098"   # Weekly Self-Assessment [DB]
 GRATITUD_DB_ID    = "c726a373ea4e49bf8b85197ae0cddebd"   # Diario de Gratitud [DB]
-PLANNING_PAGE_ID  = "2ed9982c113c809a9186eca7c1f79385"   # Sistema: Planificación Semanal
+PLANNING_PAGE_ID  = "3b19982c113c809ea424c4aa600eeb37"   # Planificación Semanal (Current Week)
 DASHBOARD_PAGE_ID = "35f9982c113c8125afebc842bef78dae"   # 📊 Dashboard (Main KPIs)
 KPIS_DB_ID        = "3ae9982c113c80719d03e543f608f4c2"   # KPIs [DB] — definiciones
 READINGS_DB_ID    = "c72ead033113467fad46bc8dc0de71d3"   # KPI Readings [DB] — serie temporal
@@ -153,54 +153,69 @@ def kpi_gratitud(lunes, domingo):
 # ── KPIs 3 y 4: plantilla semanal ───────────────────────────────────────────────
 
 def parse_semana_actual():
-    """Lee la sección de la semana en curso de la Planificación Semanal.
+    """Lee la página fija de la semana en curso.
 
-    La página lista las semanas como heading_3 ("### Semana ..."), la más
-    reciente arriba. Dentro, cada día es un heading_4 y sus to_do se dividen en
-    bloque personal / bloque Facephi por un divider.
+    A diferencia del diseño anterior (una página histórica que crecía cada
+    semana y Javi podaba a mano, con el riesgo de perder días antes de que
+    corriera el cron), esta página es SIEMPRE la misma: el esqueleto de los
+    7 días está presente desde el lunes, y kpis.py la resetea el lunes
+    siguiente tras extraer el KPI (ver resetear_semana()). Por eso ya no hace
+    falta buscar "la sección más reciente" ni avisar de días borrados.
 
-    Devuelve por día: (personal_ok, personal_total, facephi_ok, facephi_total)
-    y el nº de días marcados como trabajo en proyectos personales.
+    Cada día es un heading_2 con toggle=true ("## Lunes... {toggle=true}"),
+    y sus to_do viven ANIDADOS dentro (hijos del heading, no hermanos) — hay
+    que bajar un nivel más que en el diseño anterior. El divider `---` sigue
+    separando bloque personal / bloque Facephi dentro de cada día.
     """
     bloques = list_block_children(PLANNING_PAGE_ID)
+    titulo = next((plain(b, "heading_3") for b in bloques if b["type"] == "heading_3"),
+                  "Semana actual")
 
-    # Localiza el inicio de la semana más reciente.
-    inicio = None
-    for i, b in enumerate(bloques):
-        if b["type"] == "heading_3" and plain(b, "heading_3").lower().startswith("semana"):
-            inicio = i
-            titulo = plain(b, "heading_3")
-            break
-    if inicio is None:
+    dias, claude_dias, todo_ids = {}, 0, []
+
+    for b in bloques:
+        if b["type"] != "heading_2" or not b.get("has_children"):
+            continue
+        texto = plain(b, "heading_2")
+        dia = next((d for d in DIAS if texto.lower().startswith(d.lower())), None)
+        if not dia:
+            continue
+
+        dias[dia] = {"personal": [0, 0], "facephi": [0, 0]}
+        seccion = "personal"
+        for hijo in list_block_children(b["id"]):
+            if hijo["type"] == "divider":
+                seccion = "facephi"
+                continue
+            if hijo["type"] == "to_do":
+                checked = hijo["to_do"].get("checked", False)
+                texto_item = plain(hijo, "to_do").lower()
+                dias[dia][seccion][1] += 1
+                todo_ids.append(hijo["id"])
+                if checked:
+                    dias[dia][seccion][0] += 1
+                    if any(m in texto_item for m in CLAUDE_MARKERS):
+                        claude_dias += 1
+
+    if not dias:
         return None
+    return {"titulo": titulo, "dias": dias, "claude_dias": claude_dias, "todo_ids": todo_ids}
 
-    dias, claude_dias = {}, 0
-    dia_actual, seccion = None, "personal"
 
-    for b in bloques[inicio + 1:]:
-        t = b["type"]
-        if t == "heading_3":            # empieza la semana anterior → paramos
-            break
-        if t == "heading_4":
-            texto = plain(b, "heading_4")
-            dia_actual = next((d for d in DIAS if texto.lower().startswith(d.lower())), None)
-            seccion = "personal"
-            if dia_actual:
-                dias.setdefault(dia_actual, {"personal": [0, 0], "facephi": [0, 0]})
-            continue
-        if t == "divider":
-            seccion = "facephi"
-            continue
-        if t == "to_do" and dia_actual:
-            checked = b["to_do"].get("checked", False)
-            texto = plain(b, "to_do").lower()
-            dias[dia_actual][seccion][1] += 1
-            if checked:
-                dias[dia_actual][seccion][0] += 1
-                if any(m in texto for m in CLAUDE_MARKERS):
-                    claude_dias += 1
-
-    return {"titulo": titulo, "dias": dias, "claude_dias": claude_dias}
+def resetear_semana(semana):
+    """Desmarca todos los checks de la página de la semana, lista para la
+    semana siguiente. Solo se llama el lunes y SOLO después de haber
+    confirmado que el dato ya quedó guardado en KPI Readings — nunca borra
+    antes de guardar. No toca estructura ni texto, solo checked → False."""
+    fallos = 0
+    for todo_id in semana["todo_ids"]:
+        r = requests.patch(f"https://api.notion.com/v1/blocks/{todo_id}",
+                           headers=NOTION_HEADERS, json={"to_do": {"checked": False}})
+        if not r.ok:
+            fallos += 1
+            print(f"❌ Error desmarcando {todo_id}: {r.status_code} {r.text}")
+    print(f"🧹 Semana reseteada — {len(semana['todo_ids']) - fallos}/{len(semana['todo_ids'])} "
+          f"checks desmarcados.")
 
 # ── KPI Readings: escritura de la serie temporal ────────────────────────────────
 
@@ -290,12 +305,14 @@ def crear_reading(kpi_id, nombre, fecha, valor, nota=None):
     r.raise_for_status()
 
 
-def valores_de_la_semana(insta, grat, semana):
+def valores_de_la_semana(insta, grat, semana, es_lunes):
     """Qué se puede medir esta semana y qué no.
 
-    Higiene de datos: si faltan días en la plantilla, los KPIs que salen de ella
-    quedan incompletos. Preferimos un hueco en la serie a un dato falso, así que
-    esos se omiten con motivo en vez de escribirse.
+    Los 2 KPIs que salen de la plantilla semanal (checks, proyectos personales)
+    solo se registran el LUNES: es el único día en que la página fija refleja
+    una semana ya cerrada. Cualquier otro día, la página está a medias (los
+    días futuros existen pero vacíos) — escribirlo sería un dato falso, no
+    incompleto. Preferimos un hueco en la serie.
     """
     escribir, omitir = [], []
 
@@ -308,20 +325,18 @@ def valores_de_la_semana(insta, grat, semana):
     else:
         omitir.append((CLAVE_INSTA, "sin dato en Weekly Self-Assessment"))
 
-    # Los 2 que salen de la plantilla semanal exigen la semana completa.
     if not semana:
         for k in (CLAVE_CHECKS, CLAVE_CLAUDE):
-            omitir.append((k, "no se encontró la sección de la semana"))
+            omitir.append((k, "no se encontró la página de la semana"))
         return escribir, omitir
 
-    dias = semana["dias"]
-    if len(dias) < 7:
-        motivo = f"semana incompleta ({len(dias)}/7 días en la plantilla)"
+    if not es_lunes:
         for k in (CLAVE_CHECKS, CLAVE_CLAUDE):
-            omitir.append((k, motivo))
+            omitir.append((k, "solo se registra el lunes, al cerrar la semana"))
         return escribir, omitir
 
     # KPI fusionado: % sobre TODOS los checks de la semana (personal + Facephi).
+    dias = semana["dias"]
     ok  = sum(v["personal"][0] + v["facephi"][0] for v in dias.values())
     tot = sum(v["personal"][1] + v["facephi"][1] for v in dias.values())
     escribir.append((CLAVE_CHECKS, round(100 * ok / tot, 1) if tot else 0.0,
@@ -330,11 +345,11 @@ def valores_de_la_semana(insta, grat, semana):
     return escribir, omitir
 
 
-def sincronizar_readings(lunes, insta, grat, semana):
+def sincronizar_readings(lunes, insta, grat, semana, es_lunes):
     """Escribe las lecturas de la semana. Idempotente: no duplica si ya existen."""
     idx = kpi_index()
     ya  = readings_de_fecha(lunes)
-    escribir, omitir = valores_de_la_semana(insta, grat, semana)
+    escribir, omitir = valores_de_la_semana(insta, grat, semana, es_lunes)
 
     creadas, saltadas, sin_kpi = [], [], []
     for clave, valor, nota in escribir:
@@ -343,7 +358,7 @@ def sincronizar_readings(lunes, insta, grat, semana):
             sin_kpi.append(clave)
             continue
         if kpi["id"].replace("-", "") in ya:
-            saltadas.append(kpi["nombre"])
+            saltadas.append((clave, kpi["nombre"]))
             continue
         crear_reading(kpi["id"], kpi["nombre"], lunes, valor, nota)
         creadas.append((clave, valor))
@@ -667,6 +682,7 @@ def write_section(blocks):
 def main():
     write = "--write" in sys.argv
     lunes, domingo = semana_referencia()
+    es_lunes = date.today().weekday() == 0
 
     print("=" * 55)
     print(f"📈 2nd Brain — KPIs Personales — semana {lunes:%d/%m/%Y} – {domingo:%d/%m/%Y}")
@@ -684,39 +700,51 @@ def main():
     print(f"🙏 Gratitud: {grat['dias']}/7 días esta semana  ·  {grat['total_historico']} entradas históricas")
 
     if not semana:
-        print("✅ Sistema semanal: ⚠️  no se encontró sección 'Semana …'")
+        print("✅ Sistema semanal: ⚠️  no se encontró la página de la semana")
     else:
         dias = semana["dias"]
         per_ok  = sum(v["personal"][0] for v in dias.values())
         per_tot = sum(v["personal"][1] for v in dias.values())
         fac_ok  = sum(v["facephi"][0]  for v in dias.values())
         fac_tot = sum(v["facephi"][1]  for v in dias.values())
-        print(f"✅ «{semana['titulo']}» — {len(dias)}/7 días presentes")
+        print(f"✅ «{semana['titulo']}» — {len(dias)}/7 días con contenido")
         print(f"   personal: {per_ok}/{per_tot}  ·  facephi: {fac_ok}/{fac_tot}  ·  "
               f"claude: {semana['claude_dias']}/7")
-        if len(dias) < 7:
-            print(f"   ⚠️  faltan {7 - len(dias)} días (borrados) — métrica incompleta")
+        if not es_lunes:
+            print("   ℹ️  hoy no es lunes: es una foto a medias, no se registrará como lectura final")
 
     if not write:
         print("\nℹ️  Modo lectura. Usa --write para publicar en el dashboard.")
         return
 
     print("\n🗂️  Sincronizando KPI Readings…")
-    sync = sincronizar_readings(lunes, insta, grat, semana)
-    for nombre, valor in sync["creadas"]:
-        print(f"   ✅ lectura creada — {nombre}: {valor:g}")
-    for nombre in sync["saltadas"]:
+    sync = sincronizar_readings(lunes, insta, grat, semana, es_lunes)
+    for clave, valor in sync["creadas"]:
+        print(f"   ✅ lectura creada — {clave}: {valor:g}")
+    for clave, nombre in sync["saltadas"]:
         print(f"   ⏭️  ya existía — {nombre}")
-    for nombre, motivo in sync["omitidas"]:
-        print(f"   ⚠️  omitida — {nombre} ({motivo})")
-    for nombre in sync["sin_kpi"]:
-        print(f"   ❌ sin fila en KPIs [DB] — {nombre}")
+    for clave, motivo in sync["omitidas"]:
+        print(f"   ⚠️  omitida — {clave} ({motivo})")
+    for clave in sync["sin_kpi"]:
+        print(f"   ❌ sin fila en KPIs [DB] — {clave}")
 
     print("\n📊 Escribiendo en el dashboard…")
     series = series_por_kpi()               # una sola pasada, compartida por tarjetas y detalle
     write_tarjetas(construir_tarjetas(series))
     write_section(build_blocks(lunes, domingo, insta, grat, semana, sync, series))
     print(f"🔗 https://app.notion.com/p/{DASHBOARD_PAGE_ID}")
+
+    # Reset: SOLO lunes, y SOLO si el KPI de checks ya quedó guardado en Notion
+    # (recién creado o ya existente de una corrida anterior hoy). Nunca borramos
+    # antes de confirmar que el dato está a salvo.
+    checks_a_salvo = (any(c == CLAVE_CHECKS for c, _ in sync["creadas"]) or
+                      any(c == CLAVE_CHECKS for c, _ in sync["saltadas"]))
+    if es_lunes and semana and checks_a_salvo:
+        print("\n🧹 Reseteando la semana (lunes, dato ya guardado)…")
+        resetear_semana(semana)
+    elif es_lunes and semana:
+        print("\nℹ️  Es lunes pero el KPI de checks no se guardó — no se resetea la página "
+              "para no perder datos sin registrar.")
 
 
 if __name__ == "__main__":
