@@ -28,6 +28,7 @@ PLANNING_PAGE_ID  = "2ed9982c113c809a9186eca7c1f79385"   # Sistema: Planificaci�
 DASHBOARD_PAGE_ID = "35f9982c113c8125afebc842bef78dae"   # 📊 Dashboard (Main KPIs)
 KPIS_DB_ID        = "3ae9982c113c80719d03e543f608f4c2"   # KPIs [DB] — definiciones
 READINGS_DB_ID    = "c72ead033113467fad46bc8dc0de71d3"   # KPI Readings [DB] — serie temporal
+LAYOUT_DB_ID      = "58ac5bb7580849b69d1f7319559ce1ad"   # Dashboard Layout [DB] — qué se pinta y cómo
 
 SENTINEL   = "📈 KPIs Personales"          # título del bloque gestionado (editable por Javi)
 FIRMA      = "por kpis.py"                 # marca en el contenido: ancla real, no la toca nadie
@@ -221,6 +222,46 @@ def kpi_index():
     return idx
 
 
+def layout_rows(seccion="KPIs Personales"):
+    """Filas de Dashboard Layout [DB]: qué KPI se pinta, cómo y en qué orden.
+
+    Decoupled a propósito: esta DB no sabe nada de Clave (eso es el ancla de
+    ESCRITURA de sincronizar_readings, sin relación con esto). Aquí solo
+    importa la relación KPI → página, para poder mostrar cualquier fila de
+    KPIs [DB] con lecturas, tenga Clave o no (p. ej. un KPI manual como
+    Rentabilidad Mensual podría añadirse aquí como 'Valor fijo' sin que
+    kpis.py sepa calcularlo).
+    """
+    filas = []
+    for row in query_db(LAYOUT_DB_ID):
+        props = row["properties"]
+        if not props.get("Activo", {}).get("checkbox"):
+            continue
+        if (props.get("Sección", {}).get("select") or {}).get("name") != seccion:
+            continue
+        kpi_rel = props.get("KPI", {}).get("relation", [])
+        if not kpi_rel:
+            continue
+        etiqueta = "".join(i["plain_text"] for i in
+                           props.get("Etiqueta", {}).get("title", [])).strip()
+        icono = "".join(i["plain_text"] for i in
+                        props.get("Icono", {}).get("rich_text", [])).strip()
+        sufijo = "".join(i["plain_text"] for i in
+                         props.get("Sufijo", {}).get("rich_text", [])).strip()
+        filas.append({
+            "kpi_id":        kpi_rel[0]["id"].replace("-", ""),
+            "etiqueta":      etiqueta,
+            "icono":         icono or "📊",
+            "sufijo":        sufijo,
+            "tipo":          (props.get("Tipo", {}).get("select") or {}).get("name", "Tarjeta"),
+            "orden":         props.get("Orden", {}).get("number") or 0,
+            "menor_es_mejor": bool(props.get("Menor es mejor", {}).get("checkbox")),
+            "meta":          props.get("Meta", {}).get("number"),
+        })
+    filas.sort(key=lambda f: f["orden"])
+    return filas
+
+
 def readings_de_fecha(fecha):
     """ids de KPI que YA tienen lectura en esa fecha (para no duplicar)."""
     ya = set()
@@ -346,26 +387,35 @@ def _callout(text, emoji):
             "callout": {"rich_text": [_rt(text)], "icon": {"type": "emoji", "emoji": emoji}}}
 
 
-def bloques_serie(sync, idx):
+def bloques_serie(sync, series):
     """Estado actual de la serie temporal de cada KPI gestionado.
 
     Reporta el ESTADO (última lectura y tendencia), no solo lo que hizo esta
     ejecución: si la lectura ya existía, los números deben verse igualmente.
+    Itera Dashboard Layout [DB], no un tuple hardcodeado: cualquier fila
+    Activo aparece aquí, en su orden.
     """
     b = [_h2("🗂️ Serie temporal · KPI Readings")]
-    series = series_por_kpi()
-    nuevas = {c for c, _ in sync["creadas"]}
 
-    for clave in (CLAVE_GRATITUD, CLAVE_CLAUDE, CLAVE_CHECKS, CLAVE_INSTA):
-        kpi = idx.get(clave)
-        nombre = kpi["nombre"] if kpi else clave
-        serie = series.get(kpi["id"].replace("-", ""), []) if kpi else []
-        marca = "  ✳️ nueva" if clave in nuevas else ""
+    # sincronizar_readings() trabaja por Clave (ancla de escritura); aquí solo
+    # se usa kpi_index() para traducir ese resultado a kpi_id y dar nombres
+    # legibles en los avisos — no para decidir qué se pinta (eso es Layout).
+    idx = kpi_index()
+    nuevas_ids = {idx[c]["id"].replace("-", "") for c, _ in sync["creadas"] if c in idx}
+
+    filas = layout_rows()
+    if not filas:
+        b.append(_bullet("Sin filas activas en Dashboard Layout [DB]."))
+    for fila in filas:
+        nombre = fila["etiqueta"]
+        serie = series.get(fila["kpi_id"], [])
+        marca = "  ✳️ nueva" if fila["kpi_id"] in nuevas_ids else ""
         if not serie:
             b.append(_bullet(f"{nombre}: sin lecturas todavía"))
             continue
         fecha, valor = serie[0]
-        chispa = sparkline([v for _, v in reversed(serie[-8:])])
+        n_hist = 16 if fila["tipo"] == "Gráfica completa" else 8
+        chispa = sparkline([v for _, v in reversed(serie[-n_hist:])])
         if len(serie) > 1:
             d = valor - serie[1][1]
             flecha = "▲" if d > 0 else ("▼" if d < 0 else "=")
@@ -386,7 +436,7 @@ def bloques_serie(sync, idx):
     return b
 
 
-def build_blocks(lunes, domingo, insta, grat, semana, sync, idx):
+def build_blocks(lunes, domingo, insta, grat, semana, sync, series):
     now = datetime.now()
     b = [_p(f"Actualizado automáticamente por kpis.py · {now:%Y-%m-%d %H:%M}  ·  "
             f"semana {lunes:%d/%m} – {domingo:%d/%m}")]
@@ -420,7 +470,7 @@ def build_blocks(lunes, domingo, insta, grat, semana, sync, idx):
     if not semana:
         b.append(_callout("No se encontró ninguna sección \"Semana …\" en la página de "
                           "Planificación Semanal.", "🔴"))
-        return b + bloques_serie(sync, idx)
+        return b + bloques_serie(sync, series)
 
     dias = semana["dias"]
     presentes = len(dias)
@@ -453,20 +503,11 @@ def build_blocks(lunes, domingo, insta, grat, semana, sync, idx):
             f"borrados no se pueden contar. Para que la métrica sea fiable, conserva "
             f"la semana completa hasta el lunes.", "⚠️"))
     b.append(_bullet("Días presentes: " + (", ".join(d for d in DIAS if d in dias) or "ninguno")))
-    return b + bloques_serie(sync, idx)
+    return b + bloques_serie(sync, series)
 
 # ── Panel de tarjetas (lo primero que se ve al abrir la página) ─────────────────
 
 FIRMA_TARJETAS = "Panel actualizado por kpis.py"
-
-# (clave, etiqueta corta, emoji, sufijo, objetivo) — objetivo None = "menos es mejor".
-# La etiqueta es corta a propósito: con nombres largos Notion parte las palabras.
-TARJETAS = [
-    (CLAVE_GRATITUD, "Gratitud",         "🙏", "/7", META_GRATITUD),
-    (CLAVE_CLAUDE,   "Proy. personales", "💻", "/7", META_CLAUDE),
-    (CLAVE_CHECKS,   "Checks semanal",   "✅", "%",  70),
-    (CLAVE_INSTA,    "Instagram",        "📱", " h", None),
-]
 
 
 def sparkline(valores):
@@ -500,35 +541,43 @@ def _repartir_en_filas(columnas):
     return filas
 
 
-def construir_tarjetas(series, idx):
-    """Una tarjeta por KPI gestionado, repartidas en filas legibles."""
+def construir_tarjetas(series):
+    """Una tarjeta por fila Activo de Dashboard Layout [DB], en el orden y con
+    el tipo (Tarjeta / Valor fijo) que Javi haya configurado en Notion."""
     columnas = []
-    for clave, etiqueta, emoji, sufijo, objetivo in TARJETAS:
-        kpi = idx.get(clave)
-        serie = series.get(kpi["id"].replace("-", ""), []) if kpi else []
+    for fila in layout_rows():
+        etiqueta, emoji, sufijo = fila["etiqueta"], fila["icono"], fila["sufijo"]
+        serie = series.get(fila["kpi_id"], [])
 
         if not serie:
             texto = f"{etiqueta}\n—\nsin datos"
             color = "gray_background"
         else:
             fecha, valor = serie[0]
-            # La serie viene desc; para el sparkline la queremos cronológica.
-            cronologica = [v for _, v in reversed(serie[-8:])]
-            chispa = sparkline(cronologica)
 
-            if len(serie) > 1:
-                d = valor - serie[1][1]
-                flecha = "▲" if d > 0 else ("▼" if d < 0 else "=")
-                delta = f"{flecha} {abs(d):g}"
-            else:
-                delta = "1ª lectura"
-
-            if objetivo is None:                      # menos es mejor (Instagram)
+            if fila["menor_es_mejor"]:
                 ok = len(serie) > 1 and valor < serie[1][1]
+            elif fila["meta"] is not None:
+                ok = valor >= fila["meta"]
             else:
-                ok = valor >= objetivo
-            color = "green_background" if ok else "red_background"
-            texto = (f"{etiqueta}\n{valor:g}{sufijo}\n{chispa}\n{delta} · {fecha:%d/%m}")
+                ok = None   # sin Meta ni "menor es mejor" → solo mostrar el dato, sin juicio
+            color = "gray_background" if ok is None else (
+                "green_background" if ok else "red_background")
+
+            if fila["tipo"] == "Valor fijo":
+                # Sin sparkline ni delta: para KPIs infrecuentes, la tendencia
+                # semana a semana es ruido, no señal.
+                texto = f"{etiqueta}\n{valor:g}{sufijo}\núltima lectura · {fecha:%d/%m}"
+            else:
+                cronologica = [v for _, v in reversed(serie[-8:])]
+                chispa = sparkline(cronologica)
+                if len(serie) > 1:
+                    d = valor - serie[1][1]
+                    flecha = "▲" if d > 0 else ("▼" if d < 0 else "=")
+                    delta = f"{flecha} {abs(d):g}"
+                else:
+                    delta = "1ª lectura"
+                texto = f"{etiqueta}\n{valor:g}{sufijo}\n{chispa}\n{delta} · {fecha:%d/%m}"
 
         columnas.append({"object": "block", "type": "column",
                          "column": {"children": [_tarjeta(etiqueta, emoji, texto, color)]}})
@@ -664,9 +713,9 @@ def main():
         print(f"   ❌ sin fila en KPIs [DB] — {nombre}")
 
     print("\n📊 Escribiendo en el dashboard…")
-    idx = kpi_index()                      # una sola vez: antes se escaneaba dos veces
-    write_tarjetas(construir_tarjetas(series_por_kpi(), idx))
-    write_section(build_blocks(lunes, domingo, insta, grat, semana, sync, idx))
+    series = series_por_kpi()               # una sola pasada, compartida por tarjetas y detalle
+    write_tarjetas(construir_tarjetas(series))
+    write_section(build_blocks(lunes, domingo, insta, grat, semana, sync, series))
     print(f"🔗 https://app.notion.com/p/{DASHBOARD_PAGE_ID}")
 
 
