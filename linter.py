@@ -217,10 +217,16 @@ def build_dashboard_blocks(stats):
     semaforo = [
         (stats["blocked"] < 5, f"Tareas Blocked < 5  →  {stats['blocked']}"),
         (stats["stale"] == 0,  f"0 tareas In Progress > 7d  →  {stats['stale']}"),
-        (True,                 f"Dashboard fresco (< 7d)  →  actualizado hoy {now:%Y-%m-%d}"),
     ]
     for ok, label in semaforo:
         blocks.append(_callout(label, "🟢" if ok else "🔴"))
+    # Frescura: un dashboard 'push' NO puede autodeclararse fresco — si el cron se
+    # para, nada reescribe este bloque para ponerlo en rojo. Lo honesto es mostrar
+    # la fecha real; si al mirarla supera los 7 días, el refresco automático falló.
+    blocks.append(_callout(
+        f"Última actualización: {now:%Y-%m-%d %H:%M}  ·  refresco automático cada lunes (cron). "
+        f"Si esta fecha supera los 7 días, el cron ha fallado → revisar GitHub Actions.",
+        "ℹ️"))
 
     # 2) Salud del backlog
     blocks.append(_h2("🩺 Salud del backlog"))
