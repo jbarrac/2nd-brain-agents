@@ -1,7 +1,12 @@
 name: 🤖 Agente Ejecutor de Tareas
  
 on:
-  workflow_dispatch:        # solo se lanza manualmente desde GitHub
+  workflow_dispatch:        # además, lanzable a mano cuando quieras
+  schedule:
+    # Lunes 04:30 UTC = 06:30 Madrid (verano) / 05:30 (invierno).
+    # Se ejecuta ANTES del linter (05:00) para que el dashboard semanal ya
+    # refleje la tarea que acabe de procesar. Cadencia: ~1 tarea/semana.
+    - cron: "30 4 * * 1"
  
 jobs:
   run-agent:
