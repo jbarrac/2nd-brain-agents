@@ -87,6 +87,26 @@ conector MCP). Los scripts usan siempre el REST ID.
 | Sistema: Planificación Semanal | `2ed9982c-113c-809a-9186-eca7c1f79385` | `kpis.py` (lectura) |
 | 🔧 Internal (2nB) — Life Area | `3329982c-113c-8004-9e1f-fe949345cab4` | `areas.yaml` |
 
+### Relaciones entre DBs
+
+En Notion una relación puede ser de **una sola dirección**: si al crearla no
+activas "Show on <otra DB>", la propiedad solo existe en el origen.
+
+| Relación | Dirección |
+|---|---|
+| Goals ↔ Life Areas | ✅ Bidireccional |
+| Goals ↔ Projects | ✅ Bidireccional |
+| **Projects ↔ Tasks** | ✅ Bidireccional (activada 2026-08) |
+| Tasks → Goals | ➡️ Una dirección (deliberado: un Goal acumularía cientos de tareas) |
+| Tasks → Life Areas | ⚠️ Una dirección |
+| Projects → Life Areas | ⚠️ Una dirección |
+
+⚠️ **Trampa:** `Life Areas [DB]` tiene propiedades `Tasks [DB]` y `Projects [DB]`
+que *parecen* el reverso de las de arriba, pero **no están emparejadas**: son
+relaciones independientes de una dirección. Rellenar una no actualiza la otra y
+pueden contradecirse. La que vale para el código es siempre la del lado de
+Tasks/Projects (`Life Area (Link)`, `Life Areas [DB]`).
+
 ### Campos vinculados al código
 Centralizados en el diccionario `FIELDS` de `agent.py`. Si renombras un campo
 en Notion, actualiza **solo** el valor correspondiente en `FIELDS`.
