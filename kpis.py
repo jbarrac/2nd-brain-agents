@@ -5,12 +5,19 @@ Computa los KPIs de VIDA (no de salud del sistema: eso es linter.py) y los
 escribe como sección gestionada "📈 KPIs Personales" en el dashboard de Notion.
 
 Fuentes:
-  - Instagram   → campo "Instagram (h)" de Weekly Self-Assessment [DB] (manual)
   - Gratitud    → Diario de Gratitud [DB] (días con entrada en la semana)
   - Claude      → checkbox diario en la página de Planificación Semanal
   - Checks      → to_do de la Planificación Semanal, bloque personal vs Facephi
+  - Tareas      → Tasks [DB] (snapshot diario, no semanal: abiertas + alta prioridad)
 
-Solo lee; la única escritura es su propio bloque del dashboard. Coste: 0 tokens de IA.
+Instagram (Clave `instagram_horas`) YA NO se auto-detecta: el campo del que
+salía ("Instagram (h)" en Weekly Self-Assessment) desapareció al renombrar esa
+DB a Coaching Assessment [DB] (2026-08-09). Javi decidió que a partir de ahora
+sea 100% manual, como Peso o Rentabilidad — una lectura suelta en
+KPI Readings [DB] cuando toque. El renderizado (tarjeta + detalle) ya es
+genérico vía Dashboard Layout [DB], así que no hace falta código para eso.
+
+Solo lee (salvo KPI Readings y su propio bloque del dashboard). Coste: 0 tokens de IA.
 """
 
 import os
@@ -22,9 +29,9 @@ import requests
 # ── Configuración ──────────────────────────────────────────────────────────────
 
 NOTION_TOKEN      = os.environ["NOTION_TOKEN"]
-WEEKLY_DB_ID      = "4e203fe2bba44bbb9be4be71eb669098"   # Weekly Self-Assessment [DB]
 GRATITUD_DB_ID    = "c726a373ea4e49bf8b85197ae0cddebd"   # Diario de Gratitud [DB]
 PLANNING_PAGE_ID  = "3b19982c113c809ea424c4aa600eeb37"   # Planificación Semanal (Current Week)
+TASKS_DB_ID       = "067cbf54b7e741b09e059291a44a31c1"   # Tasks [DB] (Roadmap & Tasks)
 DASHBOARD_PAGE_ID = "35f9982c113c8125afebc842bef78dae"   # 📊 Dashboard (Main KPIs)
 KPIS_DB_ID        = "3ae9982c113c80719d03e543f608f4c2"   # KPIs [DB] — definiciones
 READINGS_DB_ID    = "c72ead033113467fad46bc8dc0de71d3"   # KPI Readings [DB] — serie temporal
@@ -38,7 +45,7 @@ FIRMA      = "por kpis.py"                 # marca en el contenido: ancla real, 
 CLAVE_GRATITUD = "gratitud_dias"
 CLAVE_CLAUDE   = "proyectos_personales"
 CLAVE_CHECKS   = "checks_semanal"    # Javi fusionó personal + Facephi en un KPI
-CLAVE_INSTA    = "instagram_horas"
+CLAVE_TAREAS   = "tareas_pendientes"
 
 # Objetivos (espejo de config/areas.yaml — si cambian allí, cambian aquí)
 META_GRATITUD = 3   # días/semana con entrada
@@ -107,32 +114,26 @@ def semana_referencia(today=None):
     lunes = ref - timedelta(days=ref.weekday())
     return lunes, lunes + timedelta(days=6)
 
-# ── KPI 1: Instagram ────────────────────────────────────────────────────────────
+# ── KPI: Tareas pendientes (snapshot diario, no semanal) ────────────────────────
 
-def kpi_instagram(lunes):
-    """Última medición vs media de las 4 semanas previas."""
-    puntos = []
-    for row in query_db(WEEKLY_DB_ID):
+def contar_tareas_pendientes():
+    """(total, abiertas, alta_prioridad_abiertas) de Tasks [DB].
+
+    Réplica ligera de lo que linter.py ya calcula para su propio informe —
+    aceptamos el escaneo duplicado de Tasks [DB] a cambio de que kpis.py no
+    dependa de linter.py ni comparta estado entre scripts.
+    """
+    total = abiertas = alta = 0
+    for row in query_db(TASKS_DB_ID):
         props = row["properties"]
-        horas = props.get("Instagram (h)", {}).get("number")
-        fecha = (props.get("Date", {}).get("date") or {}).get("start")
-        if horas is not None and fecha:
-            puntos.append((datetime.fromisoformat(fecha[:10]).date(), horas))
-    puntos.sort()
-
-    if not puntos:
-        return {"estado": "sin_datos"}
-
-    fecha_ult, horas_ult = puntos[-1]
-    previos = [h for f, h in puntos[:-1]][-4:]
-    media = sum(previos) / len(previos) if previos else None
-    return {
-        "estado": "ok",
-        "fecha": fecha_ult,
-        "horas": horas_ult,
-        "media_previa": media,
-        "delta": (horas_ult - media) if media is not None else None,
-    }
+        status = (props.get("Status", {}).get("select") or {}).get("name")
+        priority = (props.get("Priority", {}).get("select") or {}).get("name")
+        total += 1
+        if status in ("Not Started", "In Progress"):
+            abiertas += 1
+            if priority == "🔴 Alta":
+                alta += 1
+    return total, abiertas, alta
 
 # ── KPI 2: Gratitud ─────────────────────────────────────────────────────────────
 
@@ -305,7 +306,7 @@ def crear_reading(kpi_id, nombre, fecha, valor, nota=None):
     r.raise_for_status()
 
 
-def valores_de_la_semana(insta, grat, semana, es_lunes):
+def valores_de_la_semana(grat, semana, es_lunes):
     """Qué se puede medir esta semana y qué no.
 
     Los 2 KPIs que salen de la plantilla semanal (checks, proyectos personales)
@@ -313,17 +314,22 @@ def valores_de_la_semana(insta, grat, semana, es_lunes):
     una semana ya cerrada. Cualquier otro día, la página está a medias (los
     días futuros existen pero vacíos) — escribirlo sería un dato falso, no
     incompleto. Preferimos un hueco en la serie.
+
+    Instagram no aparece aquí: pasó a ser 100% manual (ver docstring del
+    módulo), no hay nada que este script pueda calcular.
     """
     escribir, omitir = [], []
 
-    # Gratitud: fuente independiente (su propia DB) → siempre medible.
-    escribir.append((CLAVE_GRATITUD, float(grat["dias"]), None))
-
-    # Instagram: manual; solo si Javi ha rellenado el campo.
-    if insta["estado"] == "ok":
-        escribir.append((CLAVE_INSTA, float(insta["horas"]), None))
+    # Gratitud: fuente independiente (su propia DB), pero el VALOR es acumulado
+    # a lo largo de la semana — igual que checks/proyectos, solo se cierra el
+    # lunes. Escribirlo cualquier día "congelaba" para siempre el conteo del
+    # primer día que corriera el script (bug real, detectado 2026-08-09: una
+    # corrida de prueba en martes dejó Gratitud en 1/7 toda la semana, cuando
+    # el cierre real fue 7/7).
+    if es_lunes:
+        escribir.append((CLAVE_GRATITUD, float(grat["dias"]), None))
     else:
-        omitir.append((CLAVE_INSTA, "sin dato en Weekly Self-Assessment"))
+        omitir.append((CLAVE_GRATITUD, "solo se registra el lunes, al cerrar la semana"))
 
     if not semana:
         for k in (CLAVE_CHECKS, CLAVE_CLAUDE):
@@ -345,11 +351,11 @@ def valores_de_la_semana(insta, grat, semana, es_lunes):
     return escribir, omitir
 
 
-def sincronizar_readings(lunes, insta, grat, semana, es_lunes):
+def sincronizar_readings(lunes, grat, semana, es_lunes):
     """Escribe las lecturas de la semana. Idempotente: no duplica si ya existen."""
     idx = kpi_index()
     ya  = readings_de_fecha(lunes)
-    escribir, omitir = valores_de_la_semana(insta, grat, semana, es_lunes)
+    escribir, omitir = valores_de_la_semana(grat, semana, es_lunes)
 
     creadas, saltadas, sin_kpi = [], [], []
     for clave, valor, nota in escribir:
@@ -363,6 +369,34 @@ def sincronizar_readings(lunes, insta, grat, semana, es_lunes):
         crear_reading(kpi["id"], kpi["nombre"], lunes, valor, nota)
         creadas.append((clave, valor))
     return {"creadas": creadas, "saltadas": saltadas, "omitidas": omitir, "sin_kpi": sin_kpi}
+
+
+def sincronizar_tareas_pendientes():
+    """Snapshot DIARIO del backlog — a diferencia de los KPIs semanales, se
+    registra cada vez que corre el script (no solo el lunes): es un estado
+    puntual (como Peso), no un acumulado de la semana. Por eso el dedup usa
+    la fecha de HOY, no el lunes de referencia."""
+    idx = kpi_index()
+    kpi = idx.get(CLAVE_TAREAS)
+    if not kpi:
+        return {"estado": "sin_kpi"}
+
+    hoy = date.today()
+    ya_hoy = set()
+    for row in query_db(READINGS_DB_ID):
+        props = row["properties"]
+        f = (props.get("Fecha", {}).get("date") or {}).get("start")
+        if f and f[:10] == hoy.isoformat():
+            for rel in props.get("KPI", {}).get("relation", []):
+                ya_hoy.add(rel["id"].replace("-", ""))
+
+    if kpi["id"].replace("-", "") in ya_hoy:
+        return {"estado": "saltada"}
+
+    total, abiertas, alta = contar_tareas_pendientes()
+    nota = f"{abiertas} abiertas de {total} totales"
+    crear_reading(kpi["id"], kpi["nombre"], hoy, float(alta), nota)
+    return {"estado": "creada", "total": total, "abiertas": abiertas, "alta": alta}
 
 
 def series_por_kpi():
@@ -451,27 +485,14 @@ def bloques_serie(sync, series):
     return b
 
 
-def build_blocks(lunes, domingo, insta, grat, semana, sync, series):
+def build_blocks(lunes, domingo, grat, semana, sync, series):
     now = datetime.now()
     b = [_p(f"Actualizado automáticamente por kpis.py · {now:%Y-%m-%d %H:%M}  ·  "
             f"semana {lunes:%d/%m} – {domingo:%d/%m}")]
 
-    # KPI 1 — Instagram
-    b.append(_h2("📱 Uso de Instagram · Free Time"))
-    if insta["estado"] == "sin_datos":
-        b.append(_callout("Sin datos aún — rellena \"Instagram (h)\" en Weekly "
-                          "Self-Assessment con las horas del Screen Time del iPhone.", "⏳"))
-    else:
-        d = insta["delta"]
-        if d is None:
-            b.append(_callout(f"{insta['horas']:.1f} h ({insta['fecha']:%d/%m}) — "
-                              f"primera medición, aún sin base de comparación.", "⏳"))
-        else:
-            emoji = "🟢" if d < 0 else ("🟡" if d == 0 else "🔴")
-            signo = "▼" if d < 0 else ("=" if d == 0 else "▲")
-            b.append(_callout(
-                f"{insta['horas']:.1f} h esta semana  ·  {signo} {abs(d):.1f} h vs "
-                f"media previa ({insta['media_previa']:.1f} h)", emoji))
+    # Instagram: sin sección dedicada — es 100% manual desde 2026-08-09 y ya
+    # aparece, como cualquier otro KPI con Clave, en la tarjeta del panel y en
+    # "Serie temporal" más abajo (bloques_serie), sin código específico.
 
     # KPI 2 — Gratitud
     b.append(_h2("🙏 Diario de Gratitud · Mental"))
@@ -688,15 +709,9 @@ def main():
     print(f"📈 2nd Brain — KPIs Personales — semana {lunes:%d/%m/%Y} – {domingo:%d/%m/%Y}")
     print("=" * 55)
 
-    insta  = kpi_instagram(lunes)
     grat   = kpi_gratitud(lunes, domingo)
     semana = parse_semana_actual()
 
-    if insta["estado"] == "sin_datos":
-        print("📱 Instagram: sin datos (rellena 'Instagram (h)' en Weekly Self-Assessment)")
-    else:
-        print(f"📱 Instagram: {insta['horas']:.1f} h  (media previa: "
-              f"{insta['media_previa'] if insta['media_previa'] is None else round(insta['media_previa'],1)})")
     print(f"🙏 Gratitud: {grat['dias']}/7 días esta semana  ·  {grat['total_historico']} entradas históricas")
 
     if not semana:
@@ -718,7 +733,7 @@ def main():
         return
 
     print("\n🗂️  Sincronizando KPI Readings…")
-    sync = sincronizar_readings(lunes, insta, grat, semana, es_lunes)
+    sync = sincronizar_readings(lunes, grat, semana, es_lunes)
     for clave, valor in sync["creadas"]:
         print(f"   ✅ lectura creada — {clave}: {valor:g}")
     for clave, nombre in sync["saltadas"]:
@@ -728,10 +743,19 @@ def main():
     for clave in sync["sin_kpi"]:
         print(f"   ❌ sin fila en KPIs [DB] — {clave}")
 
+    tareas = sincronizar_tareas_pendientes()
+    if tareas["estado"] == "creada":
+        print(f"   ✅ lectura creada — tareas_pendientes: {tareas['alta']:g} alta prioridad "
+              f"({tareas['abiertas']} abiertas de {tareas['total']} totales)")
+    elif tareas["estado"] == "saltada":
+        print("   ⏭️  ya existía — tareas_pendientes (ya se registró hoy)")
+    elif tareas["estado"] == "sin_kpi":
+        print("   ❌ sin fila en KPIs [DB] — tareas_pendientes")
+
     print("\n📊 Escribiendo en el dashboard…")
     series = series_por_kpi()               # una sola pasada, compartida por tarjetas y detalle
     write_tarjetas(construir_tarjetas(series))
-    write_section(build_blocks(lunes, domingo, insta, grat, semana, sync, series))
+    write_section(build_blocks(lunes, domingo, grat, semana, sync, series))
     print(f"🔗 https://app.notion.com/p/{DASHBOARD_PAGE_ID}")
 
     # Reset: SOLO lunes, y SOLO si el KPI de checks ya quedó guardado en Notion

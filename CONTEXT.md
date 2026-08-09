@@ -20,7 +20,7 @@ es solo lectura para ellos: aporta contexto, no recibe trabajo transaccional.
 | **Life Areas [DB]** | Las 7 áreas de vida. Cada tarea pertenece a una. | `agent.py` (vía `areas.yaml`) |
 | **Goals (Long Term) [DB]** | Objetivos por área. | `linter.py` (huérfanas) |
 | **Projects [DB]** | Proyectos por área, cuelgan de Goals. | `linter.py` (huérfanas) |
-| **Weekly Self-Assessment [DB]** | Autoevaluación semanal. Campo `Instagram (h)` manual. | `kpis.py` |
+| **Coaching Assessment [DB]** (antes "Weekly Self-Assessment") | Autoevaluación semanal (Health/Mental/Social/...). Su campo `Instagram (h)` se retiró al renombrar (09/08/2026): Instagram pasó a ser 100% manual vía KPI Readings, `kpis.py` ya no lee esta DB. | — |
 | **Diario de Gratitud [DB]** | Una entrada por día de gratitud. | `kpis.py` |
 | **KPIs [DB]** | Definición de cada KPI (`Clave`, Target, Frecuencia, Fuente, Estado). | `kpis.py` |
 | **KPI Readings** | Serie temporal de lecturas por KPI. | `kpis.py` |
