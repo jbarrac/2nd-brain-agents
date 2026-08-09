@@ -24,7 +24,8 @@ scheduler (solo manual por ahora, sin cron).
   "📈 KPIs Personales" en el dashboard. Lo invoca `linter.yml` con `--write`.
 
 ## Workflows (presupuesto Internal: máx 3 — al límite)
-- `scheduler.yml` — executor (`agent.py`). Solo `workflow_dispatch`.
+- `scheduler.yml` — executor (`agent.py`). Cron lunes 04:30 UTC + `workflow_dispatch`.
+  Corre **antes** del linter (05:00) para que el dashboard ya refleje la tarea.
 - `linter.yml` — higiene + dashboard (`linter.py`) **y KPIs (`kpis.py --write`)**.
   Cron lunes 05:00 UTC.
 - `groomer.yml` — borradores (`groomer.py`), con input `dry_run`.
@@ -78,13 +79,21 @@ conector MCP). Los scripts usan siempre el REST ID.
 | Habits | `5f2c0fcf-148b-4ba5-9495-31f494eefe07` | `30b76421-69d3-4fb7-bbb1-6831df084820` |
 | Diario de Gratitud | `c726a373-ea4e-49bf-8b85-197ae0cddebd` | `683b9872-1613-48e7-96be-35cd68b7c747` |
 | Weekly Self-Assessment | `4e203fe2-bba4-4bbb-9be4-be71eb669098` | `87afaa10-aa58-43f8-8078-bac412d0e9ab` |
+| KPIs | `3ae9982c-113c-8071-9d03-e543f608f4c2` | `3ae9982c-113c-8072-a998-000b520dca89` |
+| KPI Readings ⚠️ sin `[DB]` en el título | `c72ead03-3113-467f-ad46-bc8dc0de71d3` | `579c1189-60a1-4b0a-8940-88e1fac3882f` |
+| Dashboard Layout | `58ac5bb7-5808-49b6-9d1f-7319559ce1ad` | `1dec0a0e-a0ef-4a5e-aeee-97e040beab79` |
+
+Las 11 cuelgan de `2NB Databases`. El subsistema de KPIs son tres tablas
+acopladas: `KPIs [DB]` define (campo `Clave` = el identificador estable que usa
+`kpis.py`, **no renombrar**), `KPI Readings` guarda la serie temporal, y
+`Dashboard Layout [DB]` decide qué se pinta y en qué orden.
 
 ### Páginas que el código escribe o lee
 
 | Página | ID | Quién |
 |---|---|---|
 | Dashboard (Main KPIs) | `35f9982c-113c-8125-afeb-c842bef78dae` | `linter.py`, `kpis.py` |
-| Sistema: Planificación Semanal | `2ed9982c-113c-809a-9186-eca7c1f79385` | `kpis.py` (lectura) |
+| Planificación Semanal (Current Week) | `3b19982c-113c-809e-a424-c4aa600eeb37` | `kpis.py` (lectura + reset lunes) |
 | 🔧 Internal (2nB) — Life Area | `3329982c-113c-8004-9e1f-fe949345cab4` | `areas.yaml` |
 
 ### Relaciones entre DBs

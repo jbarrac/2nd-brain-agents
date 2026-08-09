@@ -22,8 +22,11 @@ es solo lectura para ellos: aporta contexto, no recibe trabajo transaccional.
 | **Projects [DB]** | Proyectos por área, cuelgan de Goals. | `linter.py` (huérfanas) |
 | **Weekly Self-Assessment [DB]** | Autoevaluación semanal. Campo `Instagram (h)` manual. | `kpis.py` |
 | **Diario de Gratitud [DB]** | Una entrada por día de gratitud. | `kpis.py` |
+| **KPIs [DB]** | Definición de cada KPI (`Clave`, Target, Frecuencia, Fuente, Estado). | `kpis.py` |
+| **KPI Readings** | Serie temporal de lecturas por KPI. | `kpis.py` |
+| **Dashboard Layout [DB]** | Qué KPI se pinta, cómo y en qué orden. Desacopla presentación de definición. | `kpis.py` |
 | **Mindset [DB]** | Principios y creencias. Capa de conocimiento. | — |
-| **Habits [DB]** | Hábitos. **Creada pero sin consumo automático todavía.** | — |
+| **Habits [DB]** | Hábitos. **Reservada para la futura app**; no la consume nada aún y no se borra. | — |
 
 Jerarquía: `Life Areas → Goals → Projects → Tasks`. Las relaciones son
 recíprocas y están completas.
