@@ -262,8 +262,11 @@ def layout_rows(seccion="KPIs Personales"):
                            props.get("Etiqueta", {}).get("title", [])).strip()
         icono = "".join(i["plain_text"] for i in
                         props.get("Icono", {}).get("rich_text", [])).strip()
+        # Sin .strip(): un espacio inicial en "Sufijo" (" h", " abiertas") es
+        # intencional — sufijos tipo "/7" o "%" no lo llevan. Strip se comía
+        # el espacio y dejaba "4abiertas", "6.8h" pegados al valor.
         sufijo = "".join(i["plain_text"] for i in
-                         props.get("Sufijo", {}).get("rich_text", [])).strip()
+                         props.get("Sufijo", {}).get("rich_text", []))
         filas.append({
             "kpi_id":        kpi_rel[0]["id"].replace("-", ""),
             "etiqueta":      etiqueta,
@@ -592,7 +595,9 @@ def construir_tarjetas(series):
             fecha, valor = serie[0]
 
             if fila["menor_es_mejor"]:
-                ok = len(serie) > 1 and valor < serie[1][1]
+                # "Menor es mejor" compara contra la lectura anterior, no un
+                # umbral absoluto — sin una previa no hay base de juicio.
+                ok = (valor < serie[1][1]) if len(serie) > 1 else None
             elif fila["meta"] is not None:
                 ok = valor >= fila["meta"]
             else:
