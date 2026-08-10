@@ -56,7 +56,7 @@ mental:
 finance:
   name: "💰 Finance"
   notion_page_id: "3309982c-113c-80a6-8468-cf4f48d0a9c1"
-  active: false
+  active: true
   mission: >
     Recordatorios y checklists de revisión periódica. Preparar análisis solo
     sobre datos que Javi cargue explícitamente.
