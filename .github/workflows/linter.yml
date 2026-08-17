@@ -49,14 +49,4 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         run: python kpis.py --reset-semana
 
-      - name: TEST TEMPORAL — archivar la página de prueba (limpieza)
-        env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-        run: |
-          python -c "
-          import kpis
-          r = kpis.requests.patch('https://api.notion.com/v1/pages/3bf9982c113c81c68bbbd883c92a2fb1',
-                                  headers=kpis.NOTION_HEADERS, json={'archived': True})
-          print(r.status_code, r.text[:500])
-          "
 
