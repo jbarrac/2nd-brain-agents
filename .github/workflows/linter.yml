@@ -2,6 +2,14 @@ name: 🧹 Linter de Tareas
 
 on:
   workflow_dispatch:
+    inputs:
+      reset_semana:
+        description: >-
+          Resetea la Página Fija de Planificación Semanal desde la Plantilla
+          (checks + texto). Acción explícita, NUNCA automática — úsala solo
+          cuando el cierre de la semana ya esté revisado/corregido.
+        type: boolean
+        default: false
   schedule:
     # Lunes 05:00 UTC = 07:00 Madrid (verano) / 06:00 (invierno).
     # Mantiene el KPI "dashboard fresco < 7d" siempre en verde.
@@ -30,7 +38,31 @@ jobs:
         run: python linter.py --dashboard
 
       - name: Calcular KPIs personales
+        if: github.event.inputs.reset_semana != 'true'
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         run: python kpis.py --write
+
+      - name: Resetear Página Fija desde la Plantilla (solo si se pide explícitamente)
+        if: github.event.inputs.reset_semana == 'true'
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: python kpis.py --reset-semana
+
+      - name: TEST TEMPORAL — clonar_bloque() a página de prueba (borrar tras revisar)
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: |
+          python -c "
+          import kpis
+          bloques = [kpis.clonar_bloque(b) for b in kpis.list_block_children(kpis.PLANNING_PAGE_ID)]
+          payload = {
+              'parent': {'page_id': kpis.SISTEMA_PAGE_ID},
+              'properties': {'title': {'title': [{'text': {'content': '⚠️ TEST clonar_bloque — borrar'}}]}},
+              'children': bloques,
+          }
+          r = kpis.requests.post('https://api.notion.com/v1/pages', headers=kpis.NOTION_HEADERS, json=payload)
+          print(r.status_code)
+          print(r.json().get('id') or r.text[:2000])
+          "
 

@@ -31,6 +31,8 @@ import requests
 NOTION_TOKEN      = os.environ["NOTION_TOKEN"]
 GRATITUD_DB_ID    = "c726a373ea4e49bf8b85197ae0cddebd"   # Diario de Gratitud [DB]
 PLANNING_PAGE_ID  = "3b19982c113c809ea424c4aa600eeb37"   # Planificación Semanal (Current Week)
+SISTEMA_PAGE_ID   = "2ed9982c113c809a9186eca7c1f79385"   # Sistema: Planificación Semanal — cuelga # Histórico
+TEMPLATE_PAGE_ID  = "3809982c113c80bd8e57c188737cafd9"   # _ DDMMM2026 Template Planificación Semanal
 TASKS_DB_ID       = "067cbf54b7e741b09e059291a44a31c1"   # Tasks [DB] (Roadmap & Tasks)
 DASHBOARD_PAGE_ID = "35f9982c113c8125afebc842bef78dae"   # 📊 Dashboard (Main KPIs)
 KPIS_DB_ID        = "3ae9982c113c80719d03e543f608f4c2"   # KPIs [DB] — definiciones
@@ -53,6 +55,14 @@ META_CLAUDE   = 4   # días/semana con trabajo en proyectos personales
 META_CHECKS   = 5   # días/semana con el bloque personal completo
 
 DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+MESES_ABBR = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL",
+              "AGO", "SEP", "OCT", "NOV", "DIC"]
+
+# Umbral de "dato viejo" para tarjetas manuales (Instagram, Sueño...). No
+# distingue por Frecuencia del KPI todavía — hoy todos los manuales del panel
+# son semanales, así que un umbral único vale; revisar si se añade uno diario
+# o mensual.
+UMBRAL_OBSOLETO_DIAS = 10
 # Un to_do cuyo texto contenga esto cuenta como "día usando Claude".
 CLAUDE_MARKERS = ("proyecto personal", "claude")
 
@@ -159,9 +169,10 @@ def parse_semana_actual():
     A diferencia del diseño anterior (una página histórica que crecía cada
     semana y Javi podaba a mano, con el riesgo de perder días antes de que
     corriera el cron), esta página es SIEMPRE la misma: el esqueleto de los
-    7 días está presente desde el lunes, y kpis.py la resetea el lunes
-    siguiente tras extraer el KPI (ver resetear_semana()). Por eso ya no hace
-    falta buscar "la sección más reciente" ni avisar de días borrados.
+    7 días está presente desde el lunes. El reset (ver
+    resetear_semana_desde_plantilla()) ya NO es automático — solo archivar()
+    corre solo cada lunes; el reset es una acción explícita, para darle
+    margen a Javi de corregir el cierre antes de que se borre nada.
 
     Cada día es un heading_2 con toggle=true ("## Lunes... {toggle=true}"),
     y sus to_do viven ANIDADOS dentro (hijos del heading, no hermanos) — hay
@@ -172,7 +183,7 @@ def parse_semana_actual():
     titulo = next((plain(b, "heading_3") for b in bloques if b["type"] == "heading_3"),
                   "Semana actual")
 
-    dias, claude_dias, todo_ids = {}, 0, []
+    dias, claude_dias = {}, 0
 
     for b in bloques:
         if b["type"] != "heading_2" or not b.get("has_children"):
@@ -192,7 +203,6 @@ def parse_semana_actual():
                 checked = hijo["to_do"].get("checked", False)
                 texto_item = plain(hijo, "to_do").lower()
                 dias[dia][seccion][1] += 1
-                todo_ids.append(hijo["id"])
                 if checked:
                     dias[dia][seccion][0] += 1
                     if any(m in texto_item for m in CLAUDE_MARKERS):
@@ -200,23 +210,110 @@ def parse_semana_actual():
 
     if not dias:
         return None
-    return {"titulo": titulo, "dias": dias, "claude_dias": claude_dias, "todo_ids": todo_ids}
+    return {"titulo": titulo, "dias": dias, "claude_dias": claude_dias}
 
 
-def resetear_semana(semana):
-    """Desmarca todos los checks de la página de la semana, lista para la
-    semana siguiente. Solo se llama el lunes y SOLO después de haber
-    confirmado que el dato ya quedó guardado en KPI Readings — nunca borra
-    antes de guardar. No toca estructura ni texto, solo checked → False."""
-    fallos = 0
-    for todo_id in semana["todo_ids"]:
-        r = requests.patch(f"https://api.notion.com/v1/blocks/{todo_id}",
-                           headers=NOTION_HEADERS, json={"to_do": {"checked": False}})
-        if not r.ok:
-            fallos += 1
-            print(f"❌ Error desmarcando {todo_id}: {r.status_code} {r.text}")
-    print(f"🧹 Semana reseteada — {len(semana['todo_ids']) - fallos}/{len(semana['todo_ids'])} "
-          f"checks desmarcados.")
+def _titulo_semana(lunes):
+    """'17AGO' a partir del lunes de referencia — mismo formato que ya usa Javi
+    en los títulos de página ('Current Week 17AGO', 'Week 10AGO')."""
+    return f"{lunes.day}{MESES_ABBR[lunes.month - 1]}"
+
+
+def clonar_bloque(block):
+    """Reconstruye un bloque LEÍDO en la forma que espera la API para crear
+    uno nuevo — Notion usa (casi) la misma forma para leer y escribir estas
+    propiedades (rich_text, checked, color, is_toggleable...), así que una
+    copia superficial de block[tipo] basta. Recursivo: clona también los hijos,
+    así que un toggle con to_do anidados (los días) se copia entero de una vez.
+    """
+    tipo = block["type"]
+    contenido = dict(block.get(tipo) or {})
+    nuevo = {"object": "block", "type": tipo, tipo: contenido}
+    if block.get("has_children"):
+        contenido["children"] = [clonar_bloque(h) for h in list_block_children(block["id"])]
+    return nuevo
+
+
+def existe_archivo(titulo_semana):
+    """Evita duplicar el archivo si el cron corre dos veces el mismo lunes."""
+    nombre = f"Planificación Semanal (Week {titulo_semana})"
+    for b in list_block_children(SISTEMA_PAGE_ID):
+        if b["type"] == "child_page" and b["child_page"].get("title") == nombre:
+            return True
+    return False
+
+
+def archivar_semana(lunes):
+    """Duplica el contenido ACTUAL de la Página Fija a una página nueva bajo
+    # Histórico en la página Sistema — mismo naming que Javi ya usa a mano
+    ('Week 10AGO', 'Week 3AGO'). No destructivo: solo crea, nunca borra ni
+    toca la Página Fija. Se llama todos los lunes, incondicionalmente —
+    es la red de seguridad antes de cualquier corrección o reseteo posterior.
+    """
+    titulo_semana = _titulo_semana(lunes)
+    if existe_archivo(titulo_semana):
+        print(f"⏭️  Archivo de la semana {titulo_semana} ya existe — no se duplica.")
+        return
+
+    bloques = [clonar_bloque(b) for b in list_block_children(PLANNING_PAGE_ID)]
+    payload = {
+        "parent": {"page_id": SISTEMA_PAGE_ID},
+        "properties": {"title": {"title": [
+            {"text": {"content": f"Planificación Semanal (Week {titulo_semana})"}}]}},
+        "children": bloques,
+    }
+    r = requests.post("https://api.notion.com/v1/pages", headers=NOTION_HEADERS, json=payload)
+    if not r.ok:
+        print(f"❌ Error archivando la semana {titulo_semana}: {r.status_code} {r.text}")
+    r.raise_for_status()
+    print(f"🗄️  Semana {titulo_semana} archivada bajo # Histórico "
+          f"({len(bloques)} bloques de nivel superior).")
+
+
+def resetear_semana_desde_plantilla():
+    """Sustituye el contenido de cada día (Lunes–Domingo) de la Página Fija
+    por el de la Plantilla — checks Y texto (teletrabajo/deporte/etc.) vuelven
+    a los genéricos. Focus Semanal y Global Semanal quedan intactos: son cosas
+    que Javi cura entre semanas, la Plantilla no sabe replicarlas.
+
+    NO se llama automáticamente desde el cron — es una acción explícita
+    (--reset-semana) para no borrar nada antes de que Javi haya podido
+    revisar/corregir el cierre de la semana. Asume que la semana ya se
+    archivó (archivar_semana()) antes de llamar a esto.
+    """
+    dias_plantilla = {}
+    for b in list_block_children(TEMPLATE_PAGE_ID):
+        if b["type"] == "heading_2":
+            texto = plain(b, "heading_2")
+            dia = next((d for d in DIAS if texto.lower().startswith(d.lower())), None)
+            if dia:
+                dias_plantilla[dia] = b
+
+    faltan = [d for d in DIAS if d not in dias_plantilla]
+    if faltan:
+        print(f"❌ La Plantilla no tiene bloque para: {', '.join(faltan)} — abortando, no se toca nada.")
+        return
+
+    borrados = 0
+    for b in list_block_children(PLANNING_PAGE_ID):
+        if b["type"] != "heading_2":
+            continue
+        texto = plain(b, "heading_2")
+        if next((d for d in DIAS if texto.lower().startswith(d.lower())), None):
+            r = requests.delete(f"https://api.notion.com/v1/blocks/{b['id']}", headers=NOTION_HEADERS)
+            if not r.ok:
+                print(f"❌ Error borrando '{texto}': {r.status_code} {r.text}")
+            r.raise_for_status()
+            borrados += 1
+
+    nuevos = [clonar_bloque(dias_plantilla[d]) for d in DIAS]
+    r = requests.patch(f"https://api.notion.com/v1/blocks/{PLANNING_PAGE_ID}/children",
+                       headers=NOTION_HEADERS, json={"children": nuevos})
+    if not r.ok:
+        print(f"❌ Error escribiendo los días desde la Plantilla: {r.status_code} {r.text}")
+    r.raise_for_status()
+    print(f"🧹 Semana reseteada desde la Plantilla — {borrados} días sustituidos por "
+          f"{len(nuevos)} días nuevos. Focus Semanal y Global Semanal intactos.")
 
 # ── KPI Readings: escritura de la serie temporal ────────────────────────────────
 
@@ -465,6 +562,11 @@ def bloques_serie(sync, series):
         if not serie:
             b.append(_bullet(f"{nombre}: sin lecturas todavía"))
             continue
+        if (date.today() - serie[0][0]).days > UMBRAL_OBSOLETO_DIAS:
+            dias = (date.today() - serie[0][0]).days
+            b.append(_bullet(f"{nombre}: sin dato esta semana  ·  última lectura "
+                             f"{serie[0][1]:g} el {serie[0][0]:%d/%m} (hace {dias}d)"))
+            continue
         fecha, valor = serie[0]
         n_hist = 16 if fila["tipo"] == "Gráfica completa" else 8
         chispa = sparkline([v for _, v in reversed(serie[-n_hist:])])
@@ -591,6 +693,13 @@ def construir_tarjetas(series):
         if not serie:
             texto = f"{etiqueta}\n—\nsin datos"
             color = "gray_background"
+        elif (date.today() - serie[0][0]).days > UMBRAL_OBSOLETO_DIAS:
+            # Dato real pero viejo (KPI manual sin actualizar) — no lo pintamos
+            # como si fuera de esta semana. Mejor "sin dato" honesto que un
+            # número desactualizado con pinta de actual.
+            dias = (date.today() - serie[0][0]).days
+            texto = f"{etiqueta}\nsin dato esta semana\núltima: {serie[0][1]:g}{sufijo} hace {dias}d"
+            color = "gray_background"
         else:
             fecha, valor = serie[0]
 
@@ -706,6 +815,11 @@ def write_section(blocks):
 # ── Main ────────────────────────────────────────────────────────────────────────
 
 def main():
+    if "--reset-semana" in sys.argv:
+        print("🧹 Reset explícito de la Página Fija desde la Plantilla…")
+        resetear_semana_desde_plantilla()
+        return
+
     write = "--write" in sys.argv
     lunes, domingo = semana_referencia()
     es_lunes = date.today().weekday() == 0
@@ -763,17 +877,13 @@ def main():
     write_section(build_blocks(lunes, domingo, grat, semana, sync, series))
     print(f"🔗 https://app.notion.com/p/{DASHBOARD_PAGE_ID}")
 
-    # Reset: SOLO lunes, y SOLO si el KPI de checks ya quedó guardado en Notion
-    # (recién creado o ya existente de una corrida anterior hoy). Nunca borramos
-    # antes de confirmar que el dato está a salvo.
-    checks_a_salvo = (any(c == CLAVE_CHECKS for c, _ in sync["creadas"]) or
-                      any(c == CLAVE_CHECKS for c, _ in sync["saltadas"]))
-    if es_lunes and semana and checks_a_salvo:
-        print("\n🧹 Reseteando la semana (lunes, dato ya guardado)…")
-        resetear_semana(semana)
-    elif es_lunes and semana:
-        print("\nℹ️  Es lunes pero el KPI de checks no se guardó — no se resetea la página "
-              "para no perder datos sin registrar.")
+    # Archivo: incondicional cada lunes, nunca destructivo (solo crea). Es la
+    # red de seguridad antes de cualquier corrección o del reset posterior —
+    # que YA NO es automático (ver --reset-semana): así Javi tiene margen para
+    # revisar/corregir el cierre antes de que se borre nada de la Página Fija.
+    if es_lunes:
+        print("\n🗄️  Archivando la semana bajo # Histórico…")
+        archivar_semana(lunes)
 
 
 if __name__ == "__main__":
