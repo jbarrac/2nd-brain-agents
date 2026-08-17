@@ -283,26 +283,33 @@ def archivar_semana(lunes):
           f"({len(bloques)} bloques de nivel superior).")
 
 
+# Secciones que el reset sustituye por su versión de la Plantilla. "Global
+# Semanal" se editó igual que un día (objetivos G1/G2/G3 narrowed durante la
+# semana) — va primero porque así aparece en la página, antes de Lunes.
+# "Focus Semanal" NO está aquí a propósito: es la rotación de foco entre
+# semanas que Javi cura él mismo, la Plantilla no la sabe reproducir.
+SECCIONES_RESET = ["Global Semanal"] + DIAS
+
+
 def resetear_semana_desde_plantilla():
-    """Sustituye el contenido de cada día (Lunes–Domingo) de la Página Fija
-    por el de la Plantilla — checks Y texto (teletrabajo/deporte/etc.) vuelven
-    a los genéricos. Focus Semanal y Global Semanal quedan intactos: son cosas
-    que Javi cura entre semanas, la Plantilla no sabe replicarlas.
+    """Sustituye Global Semanal + cada día (Lunes–Domingo) de la Página Fija
+    por el de la Plantilla — checks Y texto (teletrabajo/deporte/objetivos
+    G1-G2-G3/etc.) vuelven a los genéricos. Focus Semanal queda intacto.
 
     NO se llama automáticamente desde el cron — es una acción explícita
     (--reset-semana) para no borrar nada antes de que Javi haya podido
     revisar/corregir el cierre de la semana. Asume que la semana ya se
     archivó (archivar_semana()) antes de llamar a esto.
     """
-    dias_plantilla = {}
+    secciones_plantilla = {}
     for b in list_block_children(TEMPLATE_PAGE_ID):
         if b["type"] == "heading_2":
             texto = plain(b, "heading_2")
-            dia = next((d for d in DIAS if texto.lower().startswith(d.lower())), None)
-            if dia:
-                dias_plantilla[dia] = b
+            sec = next((s for s in SECCIONES_RESET if texto.lower().startswith(s.lower())), None)
+            if sec:
+                secciones_plantilla[sec] = b
 
-    faltan = [d for d in DIAS if d not in dias_plantilla]
+    faltan = [s for s in SECCIONES_RESET if s not in secciones_plantilla]
     if faltan:
         print(f"❌ La Plantilla no tiene bloque para: {', '.join(faltan)} — abortando, no se toca nada.")
         return
@@ -312,21 +319,21 @@ def resetear_semana_desde_plantilla():
         if b["type"] != "heading_2":
             continue
         texto = plain(b, "heading_2")
-        if next((d for d in DIAS if texto.lower().startswith(d.lower())), None):
+        if next((s for s in SECCIONES_RESET if texto.lower().startswith(s.lower())), None):
             r = requests.delete(f"https://api.notion.com/v1/blocks/{b['id']}", headers=NOTION_HEADERS)
             if not r.ok:
                 print(f"❌ Error borrando '{texto}': {r.status_code} {r.text}")
             r.raise_for_status()
             borrados += 1
 
-    nuevos = [clonar_bloque(dias_plantilla[d]) for d in DIAS]
+    nuevos = [clonar_bloque(secciones_plantilla[s]) for s in SECCIONES_RESET]
     r = requests.patch(f"https://api.notion.com/v1/blocks/{PLANNING_PAGE_ID}/children",
                        headers=NOTION_HEADERS, json={"children": nuevos})
     if not r.ok:
-        print(f"❌ Error escribiendo los días desde la Plantilla: {r.status_code} {r.text}")
+        print(f"❌ Error escribiendo las secciones desde la Plantilla: {r.status_code} {r.text}")
     r.raise_for_status()
-    print(f"🧹 Semana reseteada desde la Plantilla — {borrados} días sustituidos por "
-          f"{len(nuevos)} días nuevos. Focus Semanal y Global Semanal intactos.")
+    print(f"🧹 Semana reseteada desde la Plantilla — {borrados} secciones sustituidas por "
+          f"{len(nuevos)} nuevas (Global Semanal + 7 días). Focus Semanal intacto.")
 
 # ── KPI Readings: escritura de la serie temporal ────────────────────────────────
 
