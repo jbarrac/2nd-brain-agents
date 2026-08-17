@@ -49,4 +49,18 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         run: python kpis.py --reset-semana
 
+      - name: DIAG — inspeccionar color crudo de Focus Semanal
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: |
+          python -c "
+          import kpis, json
+          for b in kpis.list_block_children(kpis.PLANNING_PAGE_ID)[:8]:
+              t = b['type']
+              texto = kpis.plain(b, t) if t in ('paragraph','bulleted_list_item','heading_2','heading_3') else ''
+              rt = b.get(t, {}).get('rich_text', [])
+              colores = [i.get('annotations', {}).get('color') for i in rt]
+              print(t, '|', texto[:40], '| colores:', colores)
+          "
+
 
