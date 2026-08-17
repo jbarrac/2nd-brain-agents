@@ -219,15 +219,28 @@ def _titulo_semana(lunes):
     return f"{lunes.day}{MESES_ABBR[lunes.month - 1]}"
 
 
+def _sin_nulos(valor):
+    """Notion devuelve `null` en campos opcionales al LEER (icon, href, link...)
+    pero rechaza ese mismo `null` explícito al CREAR — quiere la clave ausente,
+    no en None. Limpieza recursiva porque el null puede estar anidado (p. ej.
+    dentro de cada item de un rich_text, no solo a nivel de bloque)."""
+    if isinstance(valor, dict):
+        return {k: _sin_nulos(v) for k, v in valor.items() if v is not None}
+    if isinstance(valor, list):
+        return [_sin_nulos(v) for v in valor]
+    return valor
+
+
 def clonar_bloque(block):
     """Reconstruye un bloque LEÍDO en la forma que espera la API para crear
     uno nuevo — Notion usa (casi) la misma forma para leer y escribir estas
     propiedades (rich_text, checked, color, is_toggleable...), así que una
-    copia superficial de block[tipo] basta. Recursivo: clona también los hijos,
-    así que un toggle con to_do anidados (los días) se copia entero de una vez.
+    copia superficial de block[tipo] basta (tras quitar los null). Recursivo:
+    clona también los hijos, así que un toggle con to_do anidados (los días)
+    se copia entero de una vez.
     """
     tipo = block["type"]
-    contenido = dict(block.get(tipo) or {})
+    contenido = _sin_nulos(dict(block.get(tipo) or {}))
     nuevo = {"object": "block", "type": tipo, tipo: contenido}
     if block.get("has_children"):
         contenido["children"] = [clonar_bloque(h) for h in list_block_children(block["id"])]
