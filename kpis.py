@@ -283,57 +283,55 @@ def archivar_semana(lunes):
           f"({len(bloques)} bloques de nivel superior).")
 
 
-# Secciones que el reset sustituye por su versión de la Plantilla. "Global
-# Semanal" se editó igual que un día (objetivos G1/G2/G3 narrowed durante la
-# semana) — va primero porque así aparece en la página, antes de Lunes.
-# "Focus Semanal" NO está aquí a propósito: es la rotación de foco entre
-# semanas que Javi cura él mismo, la Plantilla no la sabe reproducir.
-SECCIONES_RESET = ["Global Semanal"] + DIAS
+def _lunes_actual(today=None):
+    """Lunes de la semana EN CURSO (no la que se acaba de cerrar) — para
+    titular la Página Fija tras un reset. Distinto de semana_referencia(),
+    que mira hacia atrás para reportar la semana ya cerrada."""
+    today = today or date.today()
+    return today - timedelta(days=today.weekday())
 
 
 def resetear_semana_desde_plantilla():
-    """Sustituye Global Semanal + cada día (Lunes–Domingo) de la Página Fija
-    por el de la Plantilla — checks Y texto (teletrabajo/deporte/objetivos
-    G1-G2-G3/etc.) vuelven a los genéricos. Focus Semanal queda intacto.
+    """Sustituye TODO el contenido de la Página Fija por el de la Plantilla
+    (checks, texto y Focus Semanal incluidos — réplica exacta, sin
+    excepciones) y renombra la página a la semana en curso, p. ej.
+    «Planificación Semanal (Current Week 24AGO)».
 
     NO se llama automáticamente desde el cron — es una acción explícita
     (--reset-semana) para no borrar nada antes de que Javi haya podido
     revisar/corregir el cierre de la semana. Asume que la semana ya se
     archivó (archivar_semana()) antes de llamar a esto.
     """
-    secciones_plantilla = {}
-    for b in list_block_children(TEMPLATE_PAGE_ID):
-        if b["type"] == "heading_2":
-            texto = plain(b, "heading_2")
-            sec = next((s for s in SECCIONES_RESET if texto.lower().startswith(s.lower())), None)
-            if sec:
-                secciones_plantilla[sec] = b
-
-    faltan = [s for s in SECCIONES_RESET if s not in secciones_plantilla]
-    if faltan:
-        print(f"❌ La Plantilla no tiene bloque para: {', '.join(faltan)} — abortando, no se toca nada.")
+    plantilla = list_block_children(TEMPLATE_PAGE_ID)
+    if not plantilla:
+        print("❌ La Plantilla no tiene contenido — abortando, no se toca nada.")
         return
 
-    borrados = 0
-    for b in list_block_children(PLANNING_PAGE_ID):
-        if b["type"] != "heading_2":
-            continue
-        texto = plain(b, "heading_2")
-        if next((s for s in SECCIONES_RESET if texto.lower().startswith(s.lower())), None):
-            r = requests.delete(f"https://api.notion.com/v1/blocks/{b['id']}", headers=NOTION_HEADERS)
-            if not r.ok:
-                print(f"❌ Error borrando '{texto}': {r.status_code} {r.text}")
-            r.raise_for_status()
-            borrados += 1
+    actuales = list_block_children(PLANNING_PAGE_ID)
+    for b in actuales:
+        r = requests.delete(f"https://api.notion.com/v1/blocks/{b['id']}", headers=NOTION_HEADERS)
+        if not r.ok:
+            print(f"❌ Error borrando bloque: {r.status_code} {r.text}")
+        r.raise_for_status()
 
-    nuevos = [clonar_bloque(secciones_plantilla[s]) for s in SECCIONES_RESET]
+    nuevos = [clonar_bloque(b) for b in plantilla]
     r = requests.patch(f"https://api.notion.com/v1/blocks/{PLANNING_PAGE_ID}/children",
                        headers=NOTION_HEADERS, json={"children": nuevos})
     if not r.ok:
-        print(f"❌ Error escribiendo las secciones desde la Plantilla: {r.status_code} {r.text}")
+        print(f"❌ Error escribiendo el contenido de la Plantilla: {r.status_code} {r.text}")
     r.raise_for_status()
-    print(f"🧹 Semana reseteada desde la Plantilla — {borrados} secciones sustituidas por "
-          f"{len(nuevos)} nuevas (Global Semanal + 7 días). Focus Semanal intacto.")
+
+    titulo_semana = _titulo_semana(_lunes_actual())
+    nuevo_titulo = f"Planificación Semanal (Current Week {titulo_semana})"
+    r = requests.patch(f"https://api.notion.com/v1/pages/{PLANNING_PAGE_ID}",
+                       headers=NOTION_HEADERS,
+                       json={"properties": {"title": {"title": [{"text": {"content": nuevo_titulo}}]}}})
+    if not r.ok:
+        print(f"❌ Error renombrando la página: {r.status_code} {r.text}")
+    r.raise_for_status()
+
+    print(f"🧹 Semana reseteada desde la Plantilla — {len(actuales)} bloques sustituidos por "
+          f"{len(nuevos)} nuevos. Página renombrada a «{nuevo_titulo}».")
 
 # ── KPI Readings: escritura de la serie temporal ────────────────────────────────
 
