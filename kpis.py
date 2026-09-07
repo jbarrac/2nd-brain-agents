@@ -219,6 +219,14 @@ def _titulo_semana(lunes):
     return f"{lunes.day}{MESES_ABBR[lunes.month - 1]}"
 
 
+def _semana_iso(lunes):
+    """'W36-2026' — número de semana ISO con año, para no confundir la W36
+    de un año con la de otro. Añadido junto a _titulo_semana (no en su
+    lugar) en los títulos de página, a petición de Javi."""
+    anio, semana, _ = lunes.isocalendar()
+    return f"W{semana}-{anio}"
+
+
 def _sin_nulos(valor):
     """Notion devuelve `null` en campos opcionales al LEER (icon, href, link...)
     pero rechaza ese mismo `null` explícito al CREAR — quiere la clave ausente,
@@ -247,9 +255,12 @@ def clonar_bloque(block):
     return nuevo
 
 
-def existe_archivo(titulo_semana):
+def _titulo_archivo(lunes):
+    return f"Planificación Semanal (Week {_titulo_semana(lunes)} · {_semana_iso(lunes)})"
+
+
+def existe_archivo(nombre):
     """Evita duplicar el archivo si el cron corre dos veces el mismo lunes."""
-    nombre = f"Planificación Semanal (Week {titulo_semana})"
     for b in list_block_children(SISTEMA_PAGE_ID):
         if b["type"] == "child_page" and b["child_page"].get("title") == nombre:
             return True
@@ -259,28 +270,27 @@ def existe_archivo(titulo_semana):
 def archivar_semana(lunes):
     """Duplica el contenido ACTUAL de la Página Fija a una página nueva bajo
     # Histórico en la página Sistema — mismo naming que Javi ya usa a mano
-    ('Week 10AGO', 'Week 3AGO'). No destructivo: solo crea, nunca borra ni
-    toca la Página Fija. Se llama todos los lunes, incondicionalmente —
-    es la red de seguridad antes de cualquier corrección o reseteo posterior.
+    ('Week 10AGO', 'Week 3AGO'), con el número de semana ISO añadido. No
+    destructivo: solo crea, nunca borra ni toca la Página Fija. Se llama
+    todos los lunes, incondicionalmente — es la red de seguridad antes de
+    cualquier corrección o reseteo posterior.
     """
-    titulo_semana = _titulo_semana(lunes)
-    if existe_archivo(titulo_semana):
-        print(f"⏭️  Archivo de la semana {titulo_semana} ya existe — no se duplica.")
+    nombre = _titulo_archivo(lunes)
+    if existe_archivo(nombre):
+        print(f"⏭️  Archivo «{nombre}» ya existe — no se duplica.")
         return
 
     bloques = [clonar_bloque(b) for b in list_block_children(PLANNING_PAGE_ID)]
     payload = {
         "parent": {"page_id": SISTEMA_PAGE_ID},
-        "properties": {"title": {"title": [
-            {"text": {"content": f"Planificación Semanal (Week {titulo_semana})"}}]}},
+        "properties": {"title": {"title": [{"text": {"content": nombre}}]}},
         "children": bloques,
     }
     r = requests.post("https://api.notion.com/v1/pages", headers=NOTION_HEADERS, json=payload)
     if not r.ok:
-        print(f"❌ Error archivando la semana {titulo_semana}: {r.status_code} {r.text}")
+        print(f"❌ Error archivando «{nombre}»: {r.status_code} {r.text}")
     r.raise_for_status()
-    print(f"🗄️  Semana {titulo_semana} archivada bajo # Histórico "
-          f"({len(bloques)} bloques de nivel superior).")
+    print(f"🗄️  «{nombre}» archivada bajo # Histórico ({len(bloques)} bloques de nivel superior).")
 
 
 def _lunes_actual(today=None):
@@ -295,7 +305,7 @@ def resetear_semana_desde_plantilla():
     """Sustituye TODO el contenido de la Página Fija por el de la Plantilla
     (checks, texto y Focus Semanal incluidos — réplica exacta, sin
     excepciones) y renombra la página a la semana en curso, p. ej.
-    «Planificación Semanal (Current Week 24AGO)».
+    «Planificación Semanal (Current Week 24AGO · W35-2026)».
 
     NO se llama automáticamente desde el cron — es una acción explícita
     (--reset-semana) para no borrar nada antes de que Javi haya podido
@@ -321,8 +331,9 @@ def resetear_semana_desde_plantilla():
         print(f"❌ Error escribiendo el contenido de la Plantilla: {r.status_code} {r.text}")
     r.raise_for_status()
 
-    titulo_semana = _titulo_semana(_lunes_actual())
-    nuevo_titulo = f"Planificación Semanal (Current Week {titulo_semana})"
+    lunes_actual = _lunes_actual()
+    nuevo_titulo = (f"Planificación Semanal (Current Week {_titulo_semana(lunes_actual)}"
+                     f" · {_semana_iso(lunes_actual)})")
     r = requests.patch(f"https://api.notion.com/v1/pages/{PLANNING_PAGE_ID}",
                        headers=NOTION_HEADERS,
                        json={"properties": {"title": {"title": [{"text": {"content": nuevo_titulo}}]}}})
@@ -336,10 +347,13 @@ def resetear_semana_desde_plantilla():
 # ── KPI Readings: escritura de la serie temporal ────────────────────────────────
 
 def kpi_index():
-    """{clave: {'id', 'nombre'}} de las filas de KPIs [DB] que tienen Clave.
+    """{clave: {'id', 'nombre', 'frecuencia'}} de las filas de KPIs [DB] que
+    tienen Clave.
 
     Solo entran las filas con `Clave` rellena: es la señal explícita de que el
-    dashboard gestiona ese KPI. Sin Clave, el script lo ignora.
+    dashboard gestiona ese KPI. Sin Clave, el script lo ignora. `frecuencia`
+    se usa solo para decidir el formato del título de la lectura (semanal →
+    "Nombre - WXX-AAAA"), no para nada de cálculo.
     """
     idx = {}
     for row in query_db(KPIS_DB_ID):
@@ -348,8 +362,9 @@ def kpi_index():
                         props.get("Clave", {}).get("rich_text", [])).strip()
         nombre = "".join(i["plain_text"] for i in
                          props.get("Nombre", {}).get("title", [])).strip()
+        frecuencia = (props.get("Frecuencia", {}).get("select") or {}).get("name")
         if clave:
-            idx[clave] = {"id": row["id"], "nombre": nombre}
+            idx[clave] = {"id": row["id"], "nombre": nombre, "frecuencia": frecuencia}
     return idx
 
 
@@ -408,9 +423,19 @@ def readings_de_fecha(fecha):
     return ya
 
 
-def crear_reading(kpi_id, nombre, fecha, valor, nota=None):
+def crear_reading(kpi_id, nombre, fecha, valor, nota=None, frecuencia=None):
+    """`frecuencia` (de KPIs [DB], no cálculo) decide el título: los KPIs
+    Semanales se titulan "Nombre - WXX-AAAA" (a petición de Javi, para poder
+    escanear la serie por número de semana); el resto conserva la fecha
+    completa, porque WXX repetido varias veces en la misma semana (p. ej. un
+    snapshot Diario) sería ambiguo — la fecha sigue viva en la propiedad
+    `Fecha` de Notion en cualquier caso, esto es solo el título visible."""
+    if frecuencia == "Semanal":
+        titulo = f"{nombre} - {_semana_iso(fecha)}"
+    else:
+        titulo = f"{nombre} · {fecha.isoformat()}"
     props = {
-        "Registro": {"title": [{"text": {"content": f"{nombre} · {fecha.isoformat()}"[:2000]}}]},
+        "Registro": {"title": [{"text": {"content": titulo[:2000]}}]},
         "Fecha":    {"date": {"start": fecha.isoformat()}},
         "KPI":      {"relation": [{"id": kpi_id}]},
         "Valor":    {"number": valor},
@@ -484,7 +509,7 @@ def sincronizar_readings(lunes, grat, semana, es_lunes):
         if kpi["id"].replace("-", "") in ya:
             saltadas.append((clave, kpi["nombre"]))
             continue
-        crear_reading(kpi["id"], kpi["nombre"], lunes, valor, nota)
+        crear_reading(kpi["id"], kpi["nombre"], lunes, valor, nota, kpi["frecuencia"])
         creadas.append((clave, valor))
     return {"creadas": creadas, "saltadas": saltadas, "omitidas": omitir, "sin_kpi": sin_kpi}
 
@@ -513,7 +538,7 @@ def sincronizar_tareas_pendientes():
 
     total, abiertas, alta = contar_tareas_pendientes()
     nota = f"{abiertas} abiertas de {total} totales"
-    crear_reading(kpi["id"], kpi["nombre"], hoy, float(alta), nota)
+    crear_reading(kpi["id"], kpi["nombre"], hoy, float(alta), nota, kpi["frecuencia"])
     return {"estado": "creada", "total": total, "abiertas": abiertas, "alta": alta}
 
 
@@ -889,11 +914,33 @@ def main():
     elif tareas["estado"] == "sin_kpi":
         print("   ❌ sin fila en KPIs [DB] — tareas_pendientes")
 
-    print("\n📊 Escribiendo en el dashboard…")
-    series = series_por_kpi()               # una sola pasada, compartida por tarjetas y detalle
-    write_tarjetas(construir_tarjetas(series))
-    write_section(build_blocks(lunes, domingo, grat, semana, sync, series))
-    print(f"🔗 https://app.notion.com/p/{DASHBOARD_PAGE_ID}")
+    # Guarda contra un --write tardío el mismo lunes (cron retrasado por
+    # GitHub Actions — visto 2 lunes seguidos, ver memoria) que aterriza
+    # DESPUÉS de que Javi ya haya cerrado y reseteado a mano: si las 3
+    # lecturas semanales ya existían y ninguna es nueva en esta pasada, el
+    # cierre de hoy YA se hizo. Repetir el render leería parse_semana_actual()
+    # sobre la Página Fija ya reseteada (semana en blanco) y pisaría el
+    # detalle bueno del dashboard con datos de la semana equivocada — aunque
+    # sync ya haya evitado duplicar la LECTURA, el RENDER seguía siendo ciego
+    # a eso. Las tarjetas (leen la serie histórica, no la página en vivo) no
+    # tienen este problema, pero se saltan igualmente por simplicidad: nada
+    # cambió desde la última escritura buena.
+    claves_semanales = {CLAVE_GRATITUD, CLAVE_CHECKS, CLAVE_CLAUDE}
+    nuevas_esta_vez = {clave for clave, _ in sync["creadas"]}
+    saltadas_esta_vez = {clave for clave, _ in sync["saltadas"]}
+    cierre_repetido = (es_lunes and (claves_semanales & saltadas_esta_vez)
+                       and not (claves_semanales & nuevas_esta_vez))
+
+    if cierre_repetido:
+        print("\n⏭️  El cierre de esta semana ya se había hecho — no se repinta el "
+              "dashboard (evita pisar el detalle bueno con una lectura tardía "
+              "sobre la Página Fija ya reseteada).")
+    else:
+        print("\n📊 Escribiendo en el dashboard…")
+        series = series_por_kpi()            # una sola pasada, compartida por tarjetas y detalle
+        write_tarjetas(construir_tarjetas(series))
+        write_section(build_blocks(lunes, domingo, grat, semana, sync, series))
+        print(f"🔗 https://app.notion.com/p/{DASHBOARD_PAGE_ID}")
 
     # Archivo: incondicional cada lunes, nunca destructivo (solo crea). Es la
     # red de seguridad antes de cualquier corrección o del reset posterior —

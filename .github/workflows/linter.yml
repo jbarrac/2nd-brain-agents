@@ -49,5 +49,10 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         run: python kpis.py --reset-semana
 
+      - name: "[TEMP] Renombrar lecturas semanales (dry-run)"
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: python scripts-puntuales/renombrar_lecturas_semanales.py
+
 
 
