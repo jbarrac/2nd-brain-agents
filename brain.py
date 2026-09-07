@@ -145,7 +145,8 @@ def diagnostico():
     idx = kpis.kpi_index()
     ya = kpis.readings_de_fecha(lunes)
     lecturas = []
-    for clave in (kpis.CLAVE_GRATITUD, kpis.CLAVE_CHECKS, kpis.CLAVE_CLAUDE):
+    for clave in (kpis.CLAVE_GRATITUD, kpis.CLAVE_CHECKS, kpis.CLAVE_CLAUDE,
+                  kpis.CLAVE_ENTRENAMIENTO, kpis.CLAVE_TAREAS):
         info = idx.get(clave)
         if not info:
             lecturas.append((clave, "❌ sin fila en KPIs [DB]"))
@@ -193,7 +194,8 @@ def week_status():
         marca = "✅" if con_contenido == 7 else "⚠️ "
         print(f"{marca} Página Fija         {con_contenido}/7 días con contenido — «{s['titulo']}»")
         print(f"   · personal {per_ok}/{per_tot}   · facephi {fac_ok}/{fac_tot}   "
-              f"· proyectos personales {s['claude_dias']}/7")
+              f"· proyectos personales {s['claude_dias']}/7   "
+              f"· entrenamientos {s['entrenamiento_dias']}/7")
     else:
         print("❌ Página Fija         no encontrada")
 
