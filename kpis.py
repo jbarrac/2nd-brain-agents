@@ -929,7 +929,7 @@ def main():
     # a eso. Las tarjetas (leen la serie histórica, no la página en vivo) no
     # tienen este problema, pero se saltan igualmente por simplicidad: nada
     # cambió desde la última escritura buena.
-    claves_semanales = {CLAVE_GRATITUD, CLAVE_CHECKS, CLAVE_CLAUDE}
+    claves_semanales = {CLAVE_GRATITUD, CLAVE_CHECKS, CLAVE_CLAUDE, CLAVE_ENTRENAMIENTO}
     nuevas_esta_vez = {clave for clave, _ in sync["creadas"]}
     saltadas_esta_vez = {clave for clave, _ in sync["saltadas"]}
     cierre_repetido = (es_lunes and (claves_semanales & saltadas_esta_vez)
