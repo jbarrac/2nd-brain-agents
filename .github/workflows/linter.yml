@@ -1,22 +1,35 @@
-name: 🧹 Linter de Tareas
+name: 🗓️ Cierre Semanal & Dashboard
+
+# Punto de entrada único de los modos del sistema (ver brain.py).
+# Sigue siendo UNO de los 3 workflows del presupuesto Internal: los modos
+# viajan como input, no como workflows nuevos.
 
 on:
   workflow_dispatch:
     inputs:
-      reset_semana:
+      modo:
         description: >-
-          Resetea la Página Fija de Planificación Semanal desde la Plantilla
-          (checks + texto). Acción explícita, NUNCA automática — úsala solo
-          cuando el cierre de la semana ya esté revisado/corregido.
-        type: boolean
-        default: false
+          Qué hacer. status/fix no escriben nada. close registra las lecturas,
+          repinta el dashboard y archiva. open REEMPLAZA la Página Fija por la
+          Plantilla (se niega si la semana no está archivada).
+        type: choice
+        default: week-status
+        options:
+          - week-status
+          - week-fix
+          - week-close
+          - week-open
+          - dash-status
+          - dash-update
   schedule:
     # Lunes 05:00 UTC = 07:00 Madrid (verano) / 06:00 (invierno).
-    # Mantiene el KPI "dashboard fresco < 7d" siempre en verde.
+    # Cierra la semana: mantiene el KPI "dashboard fresco < 7d" en verde.
+    # NO abre la siguiente — `week open` es siempre manual y explícito, para
+    # que Javi pueda revisar y corregir el cierre antes de que se borre nada.
     - cron: "0 5 * * 1"
 
 jobs:
-  linter:
+  brain:
     runs-on: ubuntu-latest
 
     steps:
@@ -31,23 +44,10 @@ jobs:
       - name: Instalar dependencias
         run: pip install requests pyyaml
 
-      - name: Ejecutar linter + refrescar dashboard
+      - name: Ejecutar modo
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_TASKS_DB_ID: ${{ secrets.NOTION_TASKS_DB_ID }}
-        run: python linter.py --dashboard
-
-      - name: Calcular KPIs personales
-        if: github.event.inputs.reset_semana != 'true'
-        env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-        run: python kpis.py --write
-
-      - name: Resetear Página Fija desde la Plantilla (solo si se pide explícitamente)
-        if: github.event.inputs.reset_semana == 'true'
-        env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-        run: python kpis.py --reset-semana
-
-
-
+          # El cron no manda inputs: por defecto, cerrar la semana.
+          MODO: ${{ inputs.modo || 'week-close' }}
+        run: python brain.py ${MODO/-/ }

@@ -946,7 +946,9 @@ def main():
     # red de seguridad antes de cualquier corrección o del reset posterior —
     # que YA NO es automático (ver --reset-semana): así Javi tiene margen para
     # revisar/corregir el cierre antes de que se borre nada de la Página Fija.
-    if es_lunes:
+    # `--no-archivo` lo usa brain.py en `dash update`: repintar el dashboard no
+    # es cerrar la semana, y el archivo lo dispara explícitamente `week close`.
+    if es_lunes and "--no-archivo" not in sys.argv:
         print("\n🗄️  Archivando la semana bajo # Histórico…")
         archivar_semana(lunes)
 

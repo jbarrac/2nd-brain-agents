@@ -10,6 +10,10 @@ scheduler (solo manual por ahora, sin cron).
 - `prompts/executor.md` — prompt parametrizado con variables `{{...}}`
 - `config/areas.yaml` — misión/KPIs/constraints por área + `notion_page_id` y flag `active`
 - `CONTEXT.md` — contexto del sistema inyectado como `{{CONTEXT_MD}}` en el prompt
+- `brain.py` — **punto de entrada único de los modos**. No duplica lógica:
+  orquesta `kpis.py` y `linter.py`, que siguen funcionando por separado igual
+  que antes. Ritual del lunes: `week status` → `week fix` → `week close` →
+  `week open`.
 - `linter.py` — Capa 1 de grooming: informe de higiene del backlog (tareas sin
   Context/Output, sin área, huérfanas, estancadas, fallidas). Sin IA. Solo lectura,
   salvo con `--dashboard`, que refresca la sección "Salud del Sistema" en Notion.
@@ -19,15 +23,38 @@ scheduler (solo manual por ahora, sin cron).
   sobrescribe ni toca Type/Status/relaciones; si no puede redactar con fundamento
   devuelve NEEDS_INPUT. Soporta `--dry-run`.
 - `kpis.py` — KPIs de **vida** (no de salud del sistema: eso es `linter.py`).
-  Sin IA. Lee Weekly Self-Assessment [DB], Diario de Gratitud [DB] y la página
+  Sin IA. Lee Diario de Gratitud [DB] y la página
   "Sistema: Planificación Semanal"; escribe la sección gestionada
   "📈 KPIs Personales" en el dashboard. Lo invoca `linter.yml` con `--write`.
 
+## Modos (`brain.py`)
+
+Un solo verbo por ritual. Los modos que escriben están separados a propósito de
+los que solo miran, y el destructivo es siempre manual.
+
+| Modo | Escribe | Qué hace |
+|---|---|---|
+| `week status` | ❌ | Foto de la semana + preflight: qué lecturas entrarían, si ya está archivada, si falta la retro |
+| `week fix` | ❌ | Checklist de huecos con enlace a Notion. **No rellena datos**: inventarlos rompería la serie |
+| `week close` | ✅ | Archiva la Página Fija → registra lecturas → repinta el dashboard. Idempotente |
+| `week open` | ⚠️ | Reset + renombrado desde la Plantilla. **Único destructivo.** Se niega si la semana anterior no está archivada (`--force` lo salta) |
+| `dash status` | ❌ | Lo que pintarían linter y kpis, sin tocar Notion |
+| `dash update` | ✅ | Repinta «Salud del Sistema» + «KPIs Personales». No archiva (`kpis.py --no-archivo`) |
+
+**Por qué `close` y `open` están separados:** archivar es no destructivo y puede
+correr solo; resetear borra la Página Fija. Entre uno y otro hay una revisión
+humana, y por eso el cron nunca abre semana.
+
+**La retro semanal (Coaching Assessment [DB]) no se automatiza.** `week status`
+avisa si falta la entrada de la semana, pero no la redacta: una reflexión
+escrita por una máquina no es una reflexión.
+
 ## Workflows (presupuesto Internal: máx 3 — al límite)
 - `scheduler.yml` — executor (`agent.py`). Cron lunes 04:30 UTC + `workflow_dispatch`.
-  Corre **antes** del linter (05:00) para que el dashboard ya refleje la tarea.
-- `linter.yml` — higiene + dashboard (`linter.py`) **y KPIs (`kpis.py --write`)**.
-  Cron lunes 05:00 UTC.
+  Corre **antes** del cierre (05:00) para que el dashboard ya refleje la tarea.
+- `linter.yml` — «🗓️ Cierre Semanal & Dashboard»: ejecuta `brain.py <modo>`.
+  Cron lunes 05:00 UTC → `week-close`. Los 6 modos se eligen con el input `modo`
+  en `workflow_dispatch` — así no hace falta un 4º workflow, que no cabe.
 - `groomer.yml` — borradores (`groomer.py`), con input `dry_run`.
 
 ## Dónde va cada cosa
@@ -78,7 +105,7 @@ conector MCP). Los scripts usan siempre el REST ID.
 | Mindset | `c94bdd1a-863a-49ed-b167-b83de03816fb` | `4a90bb7a-e3f8-4f52-ba31-e89ac6cc88bb` |
 | Habits | `5f2c0fcf-148b-4ba5-9495-31f494eefe07` | `30b76421-69d3-4fb7-bbb1-6831df084820` |
 | Diario de Gratitud | `c726a373-ea4e-49bf-8b85-197ae0cddebd` | `683b9872-1613-48e7-96be-35cd68b7c747` |
-| Weekly Self-Assessment | `4e203fe2-bba4-4bbb-9be4-be71eb669098` | `87afaa10-aa58-43f8-8078-bac412d0e9ab` |
+| Coaching Assessment (antes Weekly Self-Assessment) | `4e203fe2-bba4-4bbb-9be4-be71eb669098` | `87afaa10-aa58-43f8-8078-bac412d0e9ab` |
 | KPIs | `3ae9982c-113c-8071-9d03-e543f608f4c2` | `3ae9982c-113c-8072-a998-000b520dca89` |
 | KPI Readings ⚠️ sin `[DB]` en el título | `c72ead03-3113-467f-ad46-bc8dc0de71d3` | `579c1189-60a1-4b0a-8940-88e1fac3882f` |
 | Dashboard Layout | `58ac5bb7-5808-49b6-9d1f-7319559ce1ad` | `1dec0a0e-a0ef-4a5e-aeee-97e040beab79` |
