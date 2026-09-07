@@ -49,15 +49,5 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         run: python kpis.py --reset-semana
 
-      - name: "[TEMP] Borrar lecturas MOCK"
-        env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-        run: python scripts-puntuales/borrar_mock_readings.py
-
-      - name: "[TEMP] Renombrar lecturas semanales (--apply)"
-        env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-        run: python scripts-puntuales/renombrar_lecturas_semanales.py --apply
-
 
 
