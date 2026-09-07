@@ -909,14 +909,16 @@ def main():
     for clave in sync["sin_kpi"]:
         print(f"   ❌ sin fila en KPIs [DB] — {clave}")
 
-    tareas = sincronizar_tareas_pendientes()
+    tareas = sincronizar_tareas_pendientes(lunes, es_lunes)
     if tareas["estado"] == "creada":
         print(f"   ✅ lectura creada — tareas_pendientes: {tareas['alta']:g} alta prioridad "
               f"({tareas['abiertas']} abiertas de {tareas['total']} totales)")
     elif tareas["estado"] == "saltada":
-        print("   ⏭️  ya existía — tareas_pendientes (ya se registró hoy)")
+        print("   ⏭️  ya existía — tareas_pendientes")
     elif tareas["estado"] == "sin_kpi":
         print("   ❌ sin fila en KPIs [DB] — tareas_pendientes")
+    elif tareas["estado"] == "no_lunes":
+        print("   ⚠️  omitida — tareas_pendientes (solo se registra el lunes, al cerrar la semana)")
 
     # Guarda contra un --write tardío el mismo lunes (cron retrasado por
     # GitHub Actions — visto 2 lunes seguidos, ver memoria) que aterriza
