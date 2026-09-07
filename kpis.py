@@ -5,10 +5,12 @@ Computa los KPIs de VIDA (no de salud del sistema: eso es linter.py) y los
 escribe como sección gestionada "📈 KPIs Personales" en el dashboard de Notion.
 
 Fuentes:
-  - Gratitud    → Diario de Gratitud [DB] (días con entrada en la semana)
-  - Claude      → checkbox diario en la página de Planificación Semanal
-  - Checks      → to_do de la Planificación Semanal, bloque personal vs Facephi
-  - Tareas      → Tasks [DB] (snapshot diario, no semanal: abiertas + alta prioridad)
+  - Gratitud      → Diario de Gratitud [DB] (días con entrada en la semana)
+  - Claude        → checkbox diario en la página de Planificación Semanal
+  - Checks        → to_do de la Planificación Semanal, bloque personal vs Facephi
+  - Entrenamientos → checkbox diario "Deporte / Ejercicio" en la Planificación Semanal
+  - Tareas        → Tasks [DB] (snapshot SEMANAL desde 2026-09-07, igual que el resto —
+                     antes era diario, Javi lo alineó con Gratitud/Checks/Proyectos)
 
 Instagram (Clave `instagram_horas`) YA NO se auto-detecta: el campo del que
 salía ("Instagram (h)" en Weekly Self-Assessment) desapareció al renombrar esa
@@ -44,10 +46,11 @@ FIRMA      = "por kpis.py"                 # marca en el contenido: ancla real, 
 
 # Ancla = columna `Clave` de KPIs [DB], no el nombre. El nombre es de Javi y lo
 # retoca; la Clave es el contrato con este script y no se renombra nunca.
-CLAVE_GRATITUD = "gratitud_dias"
-CLAVE_CLAUDE   = "proyectos_personales"
-CLAVE_CHECKS   = "checks_semanal"    # Javi fusionó personal + Facephi en un KPI
-CLAVE_TAREAS   = "tareas_pendientes"
+CLAVE_GRATITUD      = "gratitud_dias"
+CLAVE_CLAUDE        = "proyectos_personales"
+CLAVE_CHECKS        = "checks_semanal"    # Javi fusionó personal + Facephi en un KPI
+CLAVE_TAREAS        = "tareas_pendientes"
+CLAVE_ENTRENAMIENTO = "entrenamiento_dias"
 
 # Objetivos (espejo de config/areas.yaml — si cambian allí, cambian aquí)
 META_GRATITUD = 3   # días/semana con entrada
@@ -65,6 +68,10 @@ MESES_ABBR = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL",
 UMBRAL_OBSOLETO_DIAS = 10
 # Un to_do cuyo texto contenga esto cuenta como "día usando Claude".
 CLAUDE_MARKERS = ("proyecto personal", "claude")
+# Igual, para "día con ejercicio" — coincide con el ítem fijo de la Plantilla
+# ("Deporte / Ejercicio [Gym, Paddle, Andar, Nadar] + Creatina"), marcado
+# siempre que Javi haga cualquiera de esas actividades.
+ENTRENAMIENTO_MARKERS = ("deporte",)
 
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -183,7 +190,7 @@ def parse_semana_actual():
     titulo = next((plain(b, "heading_3") for b in bloques if b["type"] == "heading_3"),
                   "Semana actual")
 
-    dias, claude_dias = {}, 0
+    dias, claude_dias, entrenamiento_dias = {}, 0, 0
 
     for b in bloques:
         if b["type"] != "heading_2" or not b.get("has_children"):
@@ -207,10 +214,13 @@ def parse_semana_actual():
                     dias[dia][seccion][0] += 1
                     if any(m in texto_item for m in CLAUDE_MARKERS):
                         claude_dias += 1
+                    if any(m in texto_item for m in ENTRENAMIENTO_MARKERS):
+                        entrenamiento_dias += 1
 
     if not dias:
         return None
-    return {"titulo": titulo, "dias": dias, "claude_dias": claude_dias}
+    return {"titulo": titulo, "dias": dias, "claude_dias": claude_dias,
+            "entrenamiento_dias": entrenamiento_dias}
 
 
 def _titulo_semana(lunes):
@@ -475,12 +485,12 @@ def valores_de_la_semana(grat, semana, es_lunes):
         omitir.append((CLAVE_GRATITUD, "solo se registra el lunes, al cerrar la semana"))
 
     if not semana:
-        for k in (CLAVE_CHECKS, CLAVE_CLAUDE):
+        for k in (CLAVE_CHECKS, CLAVE_CLAUDE, CLAVE_ENTRENAMIENTO):
             omitir.append((k, "no se encontró la página de la semana"))
         return escribir, omitir
 
     if not es_lunes:
-        for k in (CLAVE_CHECKS, CLAVE_CLAUDE):
+        for k in (CLAVE_CHECKS, CLAVE_CLAUDE, CLAVE_ENTRENAMIENTO):
             omitir.append((k, "solo se registra el lunes, al cerrar la semana"))
         return escribir, omitir
 
@@ -491,6 +501,7 @@ def valores_de_la_semana(grat, semana, es_lunes):
     escribir.append((CLAVE_CHECKS, round(100 * ok / tot, 1) if tot else 0.0,
                      f"{ok}/{tot} checks (personal + Facephi)"))
     escribir.append((CLAVE_CLAUDE, float(semana["claude_dias"]), None))
+    escribir.append((CLAVE_ENTRENAMIENTO, float(semana["entrenamiento_dias"]), None))
     return escribir, omitir
 
 
@@ -514,31 +525,24 @@ def sincronizar_readings(lunes, grat, semana, es_lunes):
     return {"creadas": creadas, "saltadas": saltadas, "omitidas": omitir, "sin_kpi": sin_kpi}
 
 
-def sincronizar_tareas_pendientes():
-    """Snapshot DIARIO del backlog — a diferencia de los KPIs semanales, se
-    registra cada vez que corre el script (no solo el lunes): es un estado
-    puntual (como Peso), no un acumulado de la semana. Por eso el dedup usa
-    la fecha de HOY, no el lunes de referencia."""
+def sincronizar_tareas_pendientes(lunes, es_lunes):
+    """Semanal, igual que Gratitud/Checks/Proyectos/Entrenamientos — antes era
+    snapshot DIARIO (dedup por hoy), pero Javi lo quiso alineado con el resto
+    (2026-09-07): solo se calcula en el cierre del lunes, dedup por lunes."""
     idx = kpi_index()
     kpi = idx.get(CLAVE_TAREAS)
     if not kpi:
         return {"estado": "sin_kpi"}
+    if not es_lunes:
+        return {"estado": "no_lunes"}
 
-    hoy = date.today()
-    ya_hoy = set()
-    for row in query_db(READINGS_DB_ID):
-        props = row["properties"]
-        f = (props.get("Fecha", {}).get("date") or {}).get("start")
-        if f and f[:10] == hoy.isoformat():
-            for rel in props.get("KPI", {}).get("relation", []):
-                ya_hoy.add(rel["id"].replace("-", ""))
-
-    if kpi["id"].replace("-", "") in ya_hoy:
+    ya = readings_de_fecha(lunes)
+    if kpi["id"].replace("-", "") in ya:
         return {"estado": "saltada"}
 
     total, abiertas, alta = contar_tareas_pendientes()
     nota = f"{abiertas} abiertas de {total} totales"
-    crear_reading(kpi["id"], kpi["nombre"], hoy, float(alta), nota, kpi["frecuencia"])
+    crear_reading(kpi["id"], kpi["nombre"], lunes, float(alta), nota, kpi["frecuencia"])
     return {"estado": "creada", "total": total, "abiertas": abiertas, "alta": alta}
 
 
