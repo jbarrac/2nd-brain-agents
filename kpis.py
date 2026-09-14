@@ -311,6 +311,32 @@ def _lunes_actual(today=None):
     return today - timedelta(days=today.weekday())
 
 
+def _heading_semana(lunes):
+    """'Semana 14SEP2026 · W38-2026' — el heading_3 interno de la Página Fija.
+    Lleva la semana ISO porque parse_semana_actual() lo devuelve como `titulo`
+    y build_blocks() lo compara contra la semana reportada para detectar que
+    la página ya avanzó (guard de re-parseo ciego)."""
+    return f"Semana {_titulo_semana(lunes)}{lunes.year} · {_semana_iso(lunes)}"
+
+
+def _renombrar_heading_semana(bloques, lunes):
+    """Tras pegar la Plantilla, su heading_3 dice «Semana DDMMM2026 (Plantilla)»
+    — el reset renombraba la PÁGINA pero no este heading, así que la semana en
+    curso se reportaba con título de plantilla (visto en W37, 2026-09-14).
+    `bloques` es la respuesta del PATCH children: trae los ids recién creados."""
+    for b in bloques:
+        if b.get("type") == "heading_3":
+            nuevo = _heading_semana(lunes)
+            r = requests.patch(f"https://api.notion.com/v1/blocks/{b['id']}", headers=NOTION_HEADERS,
+                               json={"heading_3": {"rich_text": [{"text": {"content": nuevo}}]}})
+            if not r.ok:
+                print(f"❌ Error renombrando el heading de la semana: {r.status_code} {r.text}")
+            r.raise_for_status()
+            print(f"🏷️  Heading interno renombrado a «{nuevo}».")
+            return
+    print("⚠️  La Plantilla no tiene heading_3 — no se renombra el heading interno.")
+
+
 def resetear_semana_desde_plantilla():
     """Sustituye TODO el contenido de la Página Fija por el de la Plantilla
     (checks, texto y Focus Semanal incluidos — réplica exacta, sin
@@ -340,8 +366,10 @@ def resetear_semana_desde_plantilla():
     if not r.ok:
         print(f"❌ Error escribiendo el contenido de la Plantilla: {r.status_code} {r.text}")
     r.raise_for_status()
+    creados = r.json().get("results", [])
 
     lunes_actual = _lunes_actual()
+    _renombrar_heading_semana(creados, lunes_actual)
     nuevo_titulo = (f"Planificación Semanal (Current Week {_titulo_semana(lunes_actual)}"
                      f" · {_semana_iso(lunes_actual)})")
     r = requests.patch(f"https://api.notion.com/v1/pages/{PLANNING_PAGE_ID}",
@@ -637,6 +665,41 @@ def bloques_serie(sync, series):
     return b
 
 
+# Claves derivadas de la plantilla semanal (parse_semana_actual) que "Sistema
+# Semanal" necesita mostrar cuando la Página Fija ya no es la de la semana
+# reportada — ver _bloques_sistema_semanal_desde_series().
+CLAVES_SISTEMA_SEMANAL = (
+    (CLAVE_CHECKS,        "Checks (personal + Facephi)"),
+    (CLAVE_CLAUDE,        "Proyectos personales"),
+    (CLAVE_ENTRENAMIENTO, "Entrenamientos"),
+)
+
+
+def _bloques_sistema_semanal_desde_series(series):
+    """Fallback de "Sistema Semanal" cuando la Página Fija YA NO corresponde
+    a la semana que se está reportando (ver guard en build_blocks).
+
+    En vez de re-parsear en vivo una página que ya es de otra semana —lo que
+    pintaría las estadísticas en blanco de la semana nueva bajo la cabecera
+    de la vieja—, usa la ÚLTIMA lectura que YA se persistió en KPI Readings
+    para cada clave derivada de la plantilla. Es el mismo dato que
+    sincronizar_readings() escribió al cerrar de verdad esa semana, así que
+    pantalla y fuente de verdad quedan alineadas. kpi_index() solo traduce
+    Clave → kpi_id/nombre, igual que en bloques_serie().
+    """
+    idx = kpi_index()
+    b = []
+    for clave, etiqueta in CLAVES_SISTEMA_SEMANAL:
+        kpi = idx.get(clave)
+        serie = series.get(kpi["id"].replace("-", ""), []) if kpi else []
+        if not serie:
+            b.append(_bullet(f"{etiqueta}: sin lectura registrada todavía"))
+            continue
+        fecha, valor = serie[0]
+        b.append(_bullet(f"{etiqueta}: {valor:g}  ·  última lectura registrada ({fecha:%d/%m})"))
+    return b
+
+
 def build_blocks(lunes, domingo, grat, semana, sync, series):
     now = datetime.now()
     b = [_p(f"Actualizado automáticamente por kpis.py · {now:%Y-%m-%d %H:%M}  ·  "
@@ -658,6 +721,31 @@ def build_blocks(lunes, domingo, grat, semana, sync, series):
     if not semana:
         b.append(_callout("No se encontró ninguna sección \"Semana …\" en la página de "
                           "Planificación Semanal.", "🔴"))
+        return b + bloques_serie(sync, series)
+
+    # Guard contra re-parseo ciego de una Página Fija que ya avanzó de semana.
+    # parse_semana_actual() SIEMPRE lee la página en vivo, sin comprobar si esa
+    # página en vivo es la semana que se está reportando (`lunes`/`domingo`).
+    # Si para cuando se dispara este render la página ya se reseteó a la
+    # semana siguiente (p. ej. un `dash-update` por un motivo no relacionado —
+    # backfill de un KPI nuevo— llega DESPUÉS de un `week open`), un uso
+    # directo de `semana` pintaría las estadísticas en blanco de la semana
+    # NUEVA bajo la cabecera de la semana ANTERIOR que se suponía se estaba
+    # reportando. Reproducido en vivo 2026-09-07: un backfill de Entrenamientos
+    # disparó dash-update tras un week open y pisó el detalle bueno de W36 con
+    # el "4/77 checks" en blanco de W37 (reparado a mano esa vez).
+    # `cierre_repetido` en main() solo cubre el caso estrecho de "nada nuevo
+    # entre las 4 claves semanales"; esto cubre el caso general comparando la
+    # semana ISO del título en vivo contra la semana de referencia.
+    semana_iso_esperada = _semana_iso(lunes)
+    if semana_iso_esperada not in semana["titulo"]:
+        b.append(_callout(
+            f"La Página Fija ya no es de la semana reportada ({semana_iso_esperada}) — "
+            f"título actual: «{semana['titulo']}». Probablemente ya se abrió la semana "
+            "siguiente (`week open`). Se muestran las últimas lecturas ya registradas en "
+            "KPI Readings en vez de re-parsear la página en vivo, para no pisar el detalle "
+            "bueno con las estadísticas en blanco de la semana nueva.", "⚠️"))
+        b.extend(_bloques_sistema_semanal_desde_series(series))
         return b + bloques_serie(sync, series)
 
     dias = semana["dias"]
