@@ -11,6 +11,9 @@ Fuentes:
   - Entrenamientos → checkbox diario "Deporte / Ejercicio" en la Planificación Semanal
   - Tareas        → Tasks [DB] (snapshot SEMANAL desde 2026-09-07, igual que el resto —
                      antes era diario, Javi lo alineó con Gratitud/Checks/Proyectos)
+  - Coaching      → Coaching Assessment [DB] (6 KPIs, uno por dimensión — Financial/
+                     Health/Mental/Professional/Social/Time —, fila que Javi ya rellena
+                     él mismo cada semana; kpis.py solo la copia a KPI Readings)
 
 Instagram (Clave `instagram_horas`) YA NO se auto-detecta: el campo del que
 salía ("Instagram (h)" en Weekly Self-Assessment) desapareció al renombrar esa
@@ -40,6 +43,7 @@ DASHBOARD_PAGE_ID = "35f9982c113c8125afebc842bef78dae"   # 📊 Dashboard (Main 
 KPIS_DB_ID        = "3ae9982c113c80719d03e543f608f4c2"   # KPIs [DB] — definiciones
 READINGS_DB_ID    = "c72ead033113467fad46bc8dc0de71d3"   # KPI Readings [DB] — serie temporal
 LAYOUT_DB_ID      = "58ac5bb7580849b69d1f7319559ce1ad"   # Dashboard Layout [DB] — qué se pinta y cómo
+COACHING_DB_ID    = "4e203fe2bba44bbb9be4be71eb669098"   # Coaching Assessment [DB] — autoevaluación semanal
 
 SENTINEL   = "📈 KPIs Personales"          # título del bloque gestionado (editable por Javi)
 FIRMA      = "por kpis.py"                 # marca en el contenido: ancla real, no la toca nadie
@@ -51,6 +55,19 @@ CLAVE_CLAUDE        = "proyectos_personales"
 CLAVE_CHECKS        = "checks_semanal"    # Javi fusionó personal + Facephi en un KPI
 CLAVE_TAREAS        = "tareas_pendientes"
 CLAVE_ENTRENAMIENTO = "entrenamiento_dias"
+
+# Coaching: 6 KPIs, uno por dimensión de Coaching Assessment [DB] — Javi decidió
+# 2026-09-18 que fueran 6 KPIs separados y no un agregado, porque cada dimensión
+# se lee y se actúa por separado. El hábito de rellenar la autoevaluación cada
+# semana ya vive en otro checklist; esto solo sincroniza la puntuación, si existe.
+CLAVES_COACHING = (
+    ("coaching_financial",    "Financial"),
+    ("coaching_health",       "Health"),
+    ("coaching_mental",       "Mental"),
+    ("coaching_professional", "Professional"),
+    ("coaching_social",       "Social"),
+    ("coaching_time",         "Time"),
+)
 
 # Objetivos (espejo de config/areas.yaml — si cambian allí, cambian aquí)
 META_GRATITUD = 3   # días/semana con entrada
@@ -151,6 +168,20 @@ def contar_tareas_pendientes():
             if priority == "🔴 Alta":
                 alta += 1
     return total, abiertas, alta
+
+# ── KPI: Coaching (6 dimensiones) ───────────────────────────────────────────────
+
+def obtener_coaching_semana(domingo):
+    """Fila de Coaching Assessment [DB] cuya Date coincide con el domingo de
+    cierre de la semana — Javi la rellena él mismo con esa fecha al terminar
+    la semana. None si todavía no la ha rellenado: no hay nada que inventar,
+    igual que con Gratitud/Checks cuando falta el dato de origen."""
+    for row in query_db(COACHING_DB_ID):
+        fecha = (row["properties"].get("Date", {}).get("date") or {}).get("start")
+        if fecha and fecha[:10] == domingo.isoformat():
+            props = row["properties"]
+            return {campo: props.get(campo, {}).get("number") for _, campo in CLAVES_COACHING}
+    return None
 
 # ── KPI 2: Gratitud ─────────────────────────────────────────────────────────────
 
@@ -487,7 +518,7 @@ def crear_reading(kpi_id, nombre, fecha, valor, nota=None, frecuencia=None):
     r.raise_for_status()
 
 
-def valores_de_la_semana(grat, semana, es_lunes):
+def valores_de_la_semana(grat, semana, es_lunes, domingo):
     """Qué se puede medir esta semana y qué no.
 
     Los 2 KPIs que salen de la plantilla semanal (checks, proyectos personales)
@@ -512,6 +543,25 @@ def valores_de_la_semana(grat, semana, es_lunes):
     else:
         omitir.append((CLAVE_GRATITUD, "solo se registra el lunes, al cerrar la semana"))
 
+    # Coaching: fuente independiente (Coaching Assessment [DB]), desacoplada
+    # de la plantilla semanal igual que Gratitud — se cierra el lunes buscando
+    # la fila que Javi ya rellenó con Date = domingo de la semana que se cierra.
+    if not es_lunes:
+        for clave, _ in CLAVES_COACHING:
+            omitir.append((clave, "solo se registra el lunes, al cerrar la semana"))
+    else:
+        fila = obtener_coaching_semana(domingo)
+        if fila is None:
+            for clave, _ in CLAVES_COACHING:
+                omitir.append((clave, "no se rellenó la autoevaluación de Coaching esa semana"))
+        else:
+            for clave, campo in CLAVES_COACHING:
+                valor = fila.get(campo)
+                if valor is None:
+                    omitir.append((clave, f"dimensión «{campo}» sin puntuar esa semana"))
+                else:
+                    escribir.append((clave, float(valor), None))
+
     if not semana:
         for k in (CLAVE_CHECKS, CLAVE_CLAUDE, CLAVE_ENTRENAMIENTO):
             omitir.append((k, "no se encontró la página de la semana"))
@@ -533,11 +583,11 @@ def valores_de_la_semana(grat, semana, es_lunes):
     return escribir, omitir
 
 
-def sincronizar_readings(lunes, grat, semana, es_lunes):
+def sincronizar_readings(lunes, domingo, grat, semana, es_lunes):
     """Escribe las lecturas de la semana. Idempotente: no duplica si ya existen."""
     idx = kpi_index()
     ya  = readings_de_fecha(lunes)
-    escribir, omitir = valores_de_la_semana(grat, semana, es_lunes)
+    escribir, omitir = valores_de_la_semana(grat, semana, es_lunes, domingo)
 
     creadas, saltadas, sin_kpi = [], [], []
     for clave, valor, nota in escribir:
@@ -987,7 +1037,7 @@ def main():
         return
 
     print("\n🗂️  Sincronizando KPI Readings…")
-    sync = sincronizar_readings(lunes, grat, semana, es_lunes)
+    sync = sincronizar_readings(lunes, domingo, grat, semana, es_lunes)
     for clave, valor in sync["creadas"]:
         print(f"   ✅ lectura creada — {clave}: {valor:g}")
     for clave, nombre in sync["saltadas"]:
@@ -1019,7 +1069,8 @@ def main():
     # a eso. Las tarjetas (leen la serie histórica, no la página en vivo) no
     # tienen este problema, pero se saltan igualmente por simplicidad: nada
     # cambió desde la última escritura buena.
-    claves_semanales = {CLAVE_GRATITUD, CLAVE_CHECKS, CLAVE_CLAUDE, CLAVE_ENTRENAMIENTO}
+    claves_semanales = {CLAVE_GRATITUD, CLAVE_CHECKS, CLAVE_CLAUDE, CLAVE_ENTRENAMIENTO,
+                        *(clave for clave, _ in CLAVES_COACHING)}
     nuevas_esta_vez = {clave for clave, _ in sync["creadas"]}
     saltadas_esta_vez = {clave for clave, _ in sync["saltadas"]}
     cierre_repetido = (es_lunes and (claves_semanales & saltadas_esta_vez)

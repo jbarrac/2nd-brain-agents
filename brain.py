@@ -146,7 +146,8 @@ def diagnostico():
     ya = kpis.readings_de_fecha(lunes)
     lecturas = []
     for clave in (kpis.CLAVE_GRATITUD, kpis.CLAVE_CHECKS, kpis.CLAVE_CLAUDE,
-                  kpis.CLAVE_ENTRENAMIENTO, kpis.CLAVE_TAREAS):
+                  kpis.CLAVE_ENTRENAMIENTO, kpis.CLAVE_TAREAS,
+                  *(c for c, _ in kpis.CLAVES_COACHING)):
         info = idx.get(clave)
         if not info:
             lecturas.append((clave, "❌ sin fila en KPIs [DB]"))
