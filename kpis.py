@@ -466,6 +466,12 @@ def layout_rows(seccion="KPIs Personales"):
         # el espacio y dejaba "4abiertas", "6.8h" pegados al valor.
         sufijo = "".join(i["plain_text"] for i in
                          props.get("Sufijo", {}).get("rich_text", []))
+        # Grupo: opcional. En blanco = tarjeta suelta, en el flujo general.
+        # Relleno = se agrupa con las demás filas del mismo Grupo en su propio
+        # bloque de filas, con un encabezado, en vez de mezclarse por Orden
+        # con tarjetas de otra familia (ver construir_tarjetas).
+        grupo = "".join(i["plain_text"] for i in
+                        props.get("Grupo", {}).get("rich_text", [])).strip()
         filas.append({
             "kpi_id":        kpi_rel[0]["id"].replace("-", ""),
             "etiqueta":      etiqueta,
@@ -475,6 +481,7 @@ def layout_rows(seccion="KPIs Personales"):
             "orden":         props.get("Orden", {}).get("number") or 0,
             "menor_es_mejor": bool(props.get("Menor es mejor", {}).get("checkbox")),
             "meta":          props.get("Meta", {}).get("number"),
+            "grupo":         grupo,
         })
     filas.sort(key=lambda f: f["orden"])
     return filas
@@ -649,6 +656,9 @@ def _rt(content, bold=False):
 def _h2(text):
     return {"object": "block", "type": "heading_2", "heading_2": {"rich_text": [_rt(text)]}}
 
+def _h3(text):
+    return {"object": "block", "type": "heading_3", "heading_3": {"rich_text": [_rt(text)]}}
+
 def _p(text, bold=False):
     return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": [_rt(text, bold)]}}
 
@@ -721,7 +731,7 @@ def bloques_serie(sync, series):
 CLAVES_SISTEMA_SEMANAL = (
     (CLAVE_CHECKS,        "Checks (personal + Facephi)"),
     (CLAVE_CLAUDE,        "Proyectos personales"),
-    (CLAVE_ENTRENAMIENTO, "Entrenamientos"),
+    (CLAVE_ENTRENAMIENTO, "Ejercicio (Días)"),
 )
 
 
@@ -867,58 +877,83 @@ def _repartir_en_filas(columnas):
     return filas
 
 
+def _columna_tarjeta(fila, series):
+    etiqueta, emoji, sufijo = fila["etiqueta"], fila["icono"], fila["sufijo"]
+    serie = series.get(fila["kpi_id"], [])
+
+    if not serie:
+        texto = f"{etiqueta}\n—\nsin datos"
+        color = "gray_background"
+    elif (date.today() - serie[0][0]).days > UMBRAL_OBSOLETO_DIAS:
+        # Dato real pero viejo (KPI manual sin actualizar) — no lo pintamos
+        # como si fuera de esta semana. Mejor "sin dato" honesto que un
+        # número desactualizado con pinta de actual.
+        dias = (date.today() - serie[0][0]).days
+        texto = f"{etiqueta}\nsin dato esta semana\núltima: {serie[0][1]:g}{sufijo} hace {dias}d"
+        color = "gray_background"
+    else:
+        fecha, valor = serie[0]
+
+        if fila["menor_es_mejor"]:
+            # "Menor es mejor" compara contra la lectura anterior, no un
+            # umbral absoluto — sin una previa no hay base de juicio.
+            ok = (valor < serie[1][1]) if len(serie) > 1 else None
+        elif fila["meta"] is not None:
+            ok = valor >= fila["meta"]
+        else:
+            ok = None   # sin Meta ni "menor es mejor" → solo mostrar el dato, sin juicio
+        color = "gray_background" if ok is None else (
+            "green_background" if ok else "red_background")
+
+        if fila["tipo"] == "Valor fijo":
+            # Sin sparkline ni delta: para KPIs infrecuentes, la tendencia
+            # semana a semana es ruido, no señal.
+            texto = f"{etiqueta}\n{valor:g}{sufijo}\núltima lectura · {fecha:%d/%m}"
+        else:
+            cronologica = [v for _, v in reversed(serie[-8:])]
+            chispa = sparkline(cronologica)
+            if len(serie) > 1:
+                d = valor - serie[1][1]
+                flecha = "▲" if d > 0 else ("▼" if d < 0 else "=")
+                delta = f"{flecha} {abs(d):g}"
+            else:
+                delta = "1ª lectura"
+            texto = f"{etiqueta}\n{valor:g}{sufijo}\n{chispa}\n{delta} · {fecha:%d/%m}"
+
+    return {"object": "block", "type": "column",
+            "column": {"children": [_tarjeta(etiqueta, emoji, texto, color)]}}
+
+
 def construir_tarjetas(series):
     """Una tarjeta por fila Activo de Dashboard Layout [DB], en el orden y con
-    el tipo (Tarjeta / Valor fijo) que Javi haya configurado en Notion."""
-    columnas = []
+    el tipo (Tarjeta / Valor fijo) que Javi haya configurado en Notion.
+
+    Las filas con el mismo `Grupo` (p. ej. "Coaching") no se intercalan con
+    el resto por Orden: se agrupan en su propio bloque de filas, con un
+    heading_3 delante, para que una familia de KPIs relacionados quede junta
+    visualmente en vez de repartida entre bloques de 3 sin relación entre sí.
+    write_tarjetas() necesita reconocer heading_3 como parte del panel
+    gestionado para poder borrarlo y regenerarlo (ver ahí)."""
+    sueltas, grupos, orden_grupos = [], {}, []
     for fila in layout_rows():
-        etiqueta, emoji, sufijo = fila["etiqueta"], fila["icono"], fila["sufijo"]
-        serie = series.get(fila["kpi_id"], [])
+        g = fila["grupo"]
+        if not g:
+            sueltas.append(fila)
+            continue
+        if g not in grupos:
+            grupos[g] = []
+            orden_grupos.append(g)
+        grupos[g].append(fila)
 
-        if not serie:
-            texto = f"{etiqueta}\n—\nsin datos"
-            color = "gray_background"
-        elif (date.today() - serie[0][0]).days > UMBRAL_OBSOLETO_DIAS:
-            # Dato real pero viejo (KPI manual sin actualizar) — no lo pintamos
-            # como si fuera de esta semana. Mejor "sin dato" honesto que un
-            # número desactualizado con pinta de actual.
-            dias = (date.today() - serie[0][0]).days
-            texto = f"{etiqueta}\nsin dato esta semana\núltima: {serie[0][1]:g}{sufijo} hace {dias}d"
-            color = "gray_background"
-        else:
-            fecha, valor = serie[0]
+    def filas_de(lista):
+        columnas = [_columna_tarjeta(f, series) for f in lista]
+        return [{"object": "block", "type": "column_list", "column_list": {"children": fila}}
+                for fila in _repartir_en_filas(columnas)]
 
-            if fila["menor_es_mejor"]:
-                # "Menor es mejor" compara contra la lectura anterior, no un
-                # umbral absoluto — sin una previa no hay base de juicio.
-                ok = (valor < serie[1][1]) if len(serie) > 1 else None
-            elif fila["meta"] is not None:
-                ok = valor >= fila["meta"]
-            else:
-                ok = None   # sin Meta ni "menor es mejor" → solo mostrar el dato, sin juicio
-            color = "gray_background" if ok is None else (
-                "green_background" if ok else "red_background")
-
-            if fila["tipo"] == "Valor fijo":
-                # Sin sparkline ni delta: para KPIs infrecuentes, la tendencia
-                # semana a semana es ruido, no señal.
-                texto = f"{etiqueta}\n{valor:g}{sufijo}\núltima lectura · {fecha:%d/%m}"
-            else:
-                cronologica = [v for _, v in reversed(serie[-8:])]
-                chispa = sparkline(cronologica)
-                if len(serie) > 1:
-                    d = valor - serie[1][1]
-                    flecha = "▲" if d > 0 else ("▼" if d < 0 else "=")
-                    delta = f"{flecha} {abs(d):g}"
-                else:
-                    delta = "1ª lectura"
-                texto = f"{etiqueta}\n{valor:g}{sufijo}\n{chispa}\n{delta} · {fecha:%d/%m}"
-
-        columnas.append({"object": "block", "type": "column",
-                         "column": {"children": [_tarjeta(etiqueta, emoji, texto, color)]}})
-
-    bloques = [{"object": "block", "type": "column_list", "column_list": {"children": fila}}
-               for fila in _repartir_en_filas(columnas)]
+    bloques = filas_de(sueltas)
+    for g in orden_grupos:
+        bloques.append(_h3(f"🎯 {g}"))
+        bloques.extend(filas_de(grupos[g]))
     bloques.append(_p(f"{FIRMA_TARJETAS} · {datetime.now():%Y-%m-%d %H:%M}"))
     return bloques
 
@@ -926,24 +961,28 @@ def construir_tarjetas(series):
 def write_tarjetas(bloques):
     """Reemplaza el panel y lo deja arriba del todo. Idempotente.
 
-    El panel gestionado son 2 bloques adyacentes: el column_list y el párrafo de
-    firma que va justo detrás. La firma hace de ancla y de sello de frescura.
+    El panel gestionado es el párrafo de firma más todo lo que hay justo
+    delante: column_list (filas de tarjetas) y heading_3 (encabezados de
+    Grupo, ver construir_tarjetas). La firma hace de ancla y de sello de
+    frescura.
     """
     hijos = list_block_children(DASHBOARD_PAGE_ID)
+    PANEL_TIPOS = ("column_list", "heading_3")
 
     for i, b in enumerate(hijos):
         if b["type"] == "paragraph" and FIRMA_TARJETAS in plain(b, "paragraph"):
             requests.delete(f"https://api.notion.com/v1/blocks/{b['id']}",
                             headers=NOTION_HEADERS).raise_for_status()
-            # El panel puede ocupar varias filas: borra todos los column_list
-            # consecutivos que hay justo antes de la firma, no solo el último.
+            # El panel puede ocupar varias filas y varios grupos: borra todo
+            # bloque consecutivo del panel justo antes de la firma, no solo
+            # el último.
             borradas, j = 0, i - 1
-            while j >= 0 and hijos[j]["type"] == "column_list":
+            while j >= 0 and hijos[j]["type"] in PANEL_TIPOS:
                 requests.delete(f"https://api.notion.com/v1/blocks/{hijos[j]['id']}",
                                 headers=NOTION_HEADERS).raise_for_status()
                 borradas += 1
                 j -= 1
-            print(f"♻️  Panel anterior eliminado ({borradas} fila(s)).")
+            print(f"♻️  Panel anterior eliminado ({borradas} bloque(s)).")
             break
 
     ancla = list_block_children(DASHBOARD_PAGE_ID)[0]["id"]   # tras la cita de intro
