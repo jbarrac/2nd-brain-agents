@@ -45,6 +45,14 @@ los que solo miran, y el destructivo es siempre manual.
 correr solo; resetear borra la Página Fija. Entre uno y otro hay una revisión
 humana, y por eso el cron nunca abre semana.
 
+**Proyectos personales: DESACTIVADO desde 2026-09-28.** El KPI contaba to_do
+marcados que contuvieran "proyecto personal"/"claude", pero la Plantilla no
+tiene ninguno, así que solo podía dar 0 (W36-W39 registraron ceros vacíos).
+Para reactivarlo: añadir el check a la Plantilla y poner
+`REGISTRAR_PROYECTOS_PERSONALES = True` en `kpis.py` + `Activo` en su fila de
+`Dashboard Layout [DB]`. El parseo sigue contando el dato, solo no se registra
+ni se pinta.
+
 **La retro semanal (Coaching Assessment [DB]) no se automatiza.** `week status`
 avisa si falta la entrada de la semana, pero no la redacta: una reflexión
 escrita por una máquina no es una reflexión.

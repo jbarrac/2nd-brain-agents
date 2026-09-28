@@ -56,6 +56,22 @@ CLAVE_CHECKS        = "checks_semanal"    # Javi fusionó personal + Facephi en 
 CLAVE_TAREAS        = "tareas_pendientes"
 CLAVE_ENTRENAMIENTO = "entrenamiento_dias"
 
+# Proyectos personales: DESACTIVADO 2026-09-28. El KPI cuenta to_do marcados
+# cuyo texto contenga CLAUDE_MARKERS, pero la Plantilla semanal no tiene
+# ninguno, así que por construcción solo podía salir 0 — cuatro semanas
+# seguidas (W36-W39) registrando un cero que no significaba nada. Javi lo
+# aparca hasta hacerlo operativo (añadir el check a la Plantilla, o medirlo
+# desde otra fuente). Mientras esté en False no se registra la lectura ni se
+# pinta en el dashboard; el parseo sigue contando `claude_dias`, así que
+# volver a True lo reactiva entero sin más cambios.
+REGISTRAR_PROYECTOS_PERSONALES = False
+
+# Claves derivadas de la plantilla semanal que se registran al cerrar. Tupla
+# única para que activar/desactivar un KPI no haya que recordarlo en los
+# cuatro sitios que la recorren.
+CLAVES_PLANTILLA = ((CLAVE_CHECKS, CLAVE_ENTRENAMIENTO) if not REGISTRAR_PROYECTOS_PERSONALES
+                    else (CLAVE_CHECKS, CLAVE_CLAUDE, CLAVE_ENTRENAMIENTO))
+
 # Coaching: 6 KPIs, uno por dimensión de Coaching Assessment [DB] — Javi decidió
 # 2026-09-18 que fueran 6 KPIs separados y no un agregado, porque cada dimensión
 # se lee y se actúa por separado. El hábito de rellenar la autoevaluación cada
@@ -570,12 +586,12 @@ def valores_de_la_semana(grat, semana, es_lunes, domingo):
                     escribir.append((clave, float(valor), None))
 
     if not semana:
-        for k in (CLAVE_CHECKS, CLAVE_CLAUDE, CLAVE_ENTRENAMIENTO):
+        for k in CLAVES_PLANTILLA:
             omitir.append((k, "no se encontró la página de la semana"))
         return escribir, omitir
 
     if not es_lunes:
-        for k in (CLAVE_CHECKS, CLAVE_CLAUDE, CLAVE_ENTRENAMIENTO):
+        for k in CLAVES_PLANTILLA:
             omitir.append((k, "solo se registra el lunes, al cerrar la semana"))
         return escribir, omitir
 
@@ -585,7 +601,8 @@ def valores_de_la_semana(grat, semana, es_lunes, domingo):
     tot = sum(v["personal"][1] + v["facephi"][1] for v in dias.values())
     escribir.append((CLAVE_CHECKS, round(100 * ok / tot, 1) if tot else 0.0,
                      f"{ok}/{tot} checks (personal + Facephi)"))
-    escribir.append((CLAVE_CLAUDE, float(semana["claude_dias"]), None))
+    if REGISTRAR_PROYECTOS_PERSONALES:
+        escribir.append((CLAVE_CLAUDE, float(semana["claude_dias"]), None))
     escribir.append((CLAVE_ENTRENAMIENTO, float(semana["entrenamiento_dias"]), None))
     return escribir, omitir
 
@@ -728,10 +745,12 @@ def bloques_serie(sync, series):
 # Claves derivadas de la plantilla semanal (parse_semana_actual) que "Sistema
 # Semanal" necesita mostrar cuando la Página Fija ya no es la de la semana
 # reportada — ver _bloques_sistema_semanal_desde_series().
-CLAVES_SISTEMA_SEMANAL = (
-    (CLAVE_CHECKS,        "Checks (personal + Facephi)"),
-    (CLAVE_CLAUDE,        "Proyectos personales"),
-    (CLAVE_ENTRENAMIENTO, "Ejercicio (Días)"),
+CLAVES_SISTEMA_SEMANAL = tuple(
+    (clave, etiqueta) for clave, etiqueta in (
+        (CLAVE_CHECKS,        "Checks (personal + Facephi)"),
+        (CLAVE_CLAUDE,        "Proyectos personales"),
+        (CLAVE_ENTRENAMIENTO, "Ejercicio (Días)"),
+    ) if clave in CLAVES_PLANTILLA
 )
 
 
@@ -827,10 +846,11 @@ def build_blocks(lunes, domingo, grat, semana, sync, series):
         "🟢" if pct(fac_ok, fac_tot) >= 70 else ("🟡" if fac_ok else "🔴")))
 
     # KPI Claude
-    c = semana["claude_dias"]
-    b.append(_callout(f"{c}/7 días con trabajo en proyectos personales "
-                      f"(objetivo ≥ {META_CLAUDE})",
-                      "🟢" if c >= META_CLAUDE else ("🟡" if c else "🔴")))
+    if REGISTRAR_PROYECTOS_PERSONALES:
+        c = semana["claude_dias"]
+        b.append(_callout(f"{c}/7 días con trabajo en proyectos personales "
+                          f"(objetivo ≥ {META_CLAUDE})",
+                          "🟢" if c >= META_CLAUDE else ("🟡" if c else "🔴")))
 
     # Aviso de integridad: si faltan días, el porcentaje no es comparable.
     if presentes < 7:
@@ -1108,7 +1128,7 @@ def main():
     # a eso. Las tarjetas (leen la serie histórica, no la página en vivo) no
     # tienen este problema, pero se saltan igualmente por simplicidad: nada
     # cambió desde la última escritura buena.
-    claves_semanales = {CLAVE_GRATITUD, CLAVE_CHECKS, CLAVE_CLAUDE, CLAVE_ENTRENAMIENTO,
+    claves_semanales = {CLAVE_GRATITUD, *CLAVES_PLANTILLA,
                         *(clave for clave, _ in CLAVES_COACHING)}
     nuevas_esta_vez = {clave for clave, _ in sync["creadas"]}
     saltadas_esta_vez = {clave for clave, _ in sync["saltadas"]}

@@ -126,7 +126,7 @@ def diagnostico():
                 "url": _url(kpis.PLANNING_PAGE_ID),
                 "como": "Rellena o marca los días que sí hiciste antes de cerrar.",
             })
-        if semana["claude_dias"] < kpis.META_CLAUDE:
+        if kpis.REGISTRAR_PROYECTOS_PERSONALES and semana["claude_dias"] < kpis.META_CLAUDE:
             avisos.append(f"Proyectos personales: {semana['claude_dias']}/{kpis.META_CLAUDE} "
                           f"días (por debajo de la meta — dato, no error)")
 
@@ -145,8 +145,7 @@ def diagnostico():
     idx = kpis.kpi_index()
     ya = kpis.readings_de_fecha(lunes)
     lecturas = []
-    for clave in (kpis.CLAVE_GRATITUD, kpis.CLAVE_CHECKS, kpis.CLAVE_CLAUDE,
-                  kpis.CLAVE_ENTRENAMIENTO, kpis.CLAVE_TAREAS,
+    for clave in (kpis.CLAVE_GRATITUD, *kpis.CLAVES_PLANTILLA, kpis.CLAVE_TAREAS,
                   *(c for c, _ in kpis.CLAVES_COACHING)):
         info = idx.get(clave)
         if not info:
@@ -194,9 +193,11 @@ def week_status():
         con_contenido = sum(1 for dia in kpis.DIAS if _tiene_checks(s, dia))
         marca = "✅" if con_contenido == 7 else "⚠️ "
         print(f"{marca} Página Fija         {con_contenido}/7 días con contenido — «{s['titulo']}»")
-        print(f"   · personal {per_ok}/{per_tot}   · facephi {fac_ok}/{fac_tot}   "
-              f"· proyectos personales {s['claude_dias']}/7   "
-              f"· entrenamientos {s['entrenamiento_dias']}/7")
+        detalle = (f"   · personal {per_ok}/{per_tot}   · facephi {fac_ok}/{fac_tot}   "
+                   f"· entrenamientos {s['entrenamiento_dias']}/7")
+        if kpis.REGISTRAR_PROYECTOS_PERSONALES:
+            detalle += f"   · proyectos personales {s['claude_dias']}/7"
+        print(detalle)
     else:
         print("❌ Página Fija         no encontrada")
 
