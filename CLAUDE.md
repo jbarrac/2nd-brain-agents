@@ -37,6 +37,7 @@ los que solo miran, y el destructivo es siempre manual.
 | `week status` | ❌ | Foto de la semana + preflight: qué lecturas entrarían, si ya está archivada, si falta la retro |
 | `week fix` | ❌ | Checklist de huecos con enlace a Notion. **No rellena datos**: inventarlos rompería la serie |
 | `week close` | ✅ | Archiva la Página Fija → registra lecturas → repinta el dashboard. Idempotente |
+| `week retry` | ✅ | Recupera las lecturas de la semana **ya cerrada** cuyo dato llegó tarde (Coaching rellenado después del cierre). Solo fuentes fechadas e inmutables; repinta solo las tarjetas |
 | `week open` | ⚠️ | Reset + renombrado desde la Plantilla. **Único destructivo.** Se niega si la semana anterior no está archivada (`--force` lo salta) |
 | `dash status` | ❌ | Lo que pintarían linter y kpis, sin tocar Notion |
 | `dash update` | ✅ | Repinta «Salud del Sistema» + «KPIs Personales». No archiva (`kpis.py --no-archivo`) |
@@ -52,6 +53,22 @@ Para reactivarlo: añadir el check a la Plantilla y poner
 `REGISTRAR_PROYECTOS_PERSONALES = True` en `kpis.py` + `Activo` en su fila de
 `Dashboard Layout [DB]`. El parseo sigue contando el dato, solo no se registra
 ni se pinta.
+
+**Por qué existe `week retry`:** el cron cierra el lunes por la mañana y Javi
+rellena la autoevaluación de Coaching después, así que esas 6 lecturas se
+quedaban fuera para siempre — pasó en W41 y W42, y hubo que crearlas a mano.
+`week retry` solo recupera KPIs cuya fuente es fechada e inmutable (la fila de
+Coaching Assessment con Date = domingo); nunca los que se calculan sobre la
+Página Fija en vivo, que ya es de otra semana. Por eso repinta solo las
+tarjetas (leen la serie histórica) y no el detalle «Sistema Semanal».
+
+**Regla de oro de los KPIs semanales: se registran SOLO el lunes.** Incluida
+Gratitud — su fuente es independiente, pero el valor es acumulado, y
+escribirla cualquier otro día congela el conteo parcial de ese día para toda
+la semana (bug real de 2026-08-09). `brain.py` **no** reimplementa esta regla:
+el preflight llama a `kpis.valores_de_la_semana()`, que es quien decide en el
+cierre. Tenerla duplicada hizo que `week status` mintiera sobre Gratitud
+durante semanas (2026-10-21).
 
 **La retro semanal (Coaching Assessment [DB]) no se automatiza.** `week status`
 avisa si falta la entrada de la semana, pero no la redacta: una reflexión

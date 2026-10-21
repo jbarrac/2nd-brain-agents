@@ -31,10 +31,11 @@ except KeyError:
              "   Local:  export NOTION_TOKEN=secret_...\n"
              "   CI:     ya está como secret del repo.")
 
-# Coaching Assessment [DB] (antes «Weekly Self-Assessment»): la retro semanal.
-# El código NO la escribe nunca — solo comprueba si existe la entrada de la
-# semana, porque una reflexión redactada por una máquina no es una reflexión.
-RETRO_DB_ID = "4e203fe2bba44bbb9be4be71eb669098"
+# La retro semanal (Coaching Assessment [DB]): el código NO la escribe nunca —
+# solo comprueba si existe la entrada de la semana, porque una reflexión
+# redactada por una máquina no es una reflexión. El ID lo tiene kpis.py, que es
+# quien lee sus puntuaciones; aquí no se duplica.
+RETRO_DB_ID = kpis.COACHING_DB_ID
 
 BLOQUE = "─" * 60
 
@@ -141,21 +142,35 @@ def diagnostico():
     elif retro is None:
         avisos.append("Retro semanal: no se pudo consultar la DB (¿sin acceso la integración?)")
 
-    # Preflight de cierre: qué lecturas semanales entrarían hoy.
+    # Preflight de cierre: qué lecturas entrarían hoy. La regla de cada KPI NO
+    # se reimplementa aquí — se le pregunta a kpis.valores_de_la_semana(), que
+    # es quien decide en el cierre de verdad. Tenerla duplicada hizo que este
+    # informe mintiera sobre Gratitud: decía «se creará» cualquier día, cuando
+    # kpis.py ya la omitía fuera de lunes desde agosto. Un preflight que no
+    # usa el código del cierre no es un preflight.
     idx = kpis.kpi_index()
     ya = kpis.readings_de_fecha(lunes)
-    lecturas = []
-    for clave in (kpis.CLAVE_GRATITUD, *kpis.CLAVES_PLANTILLA, kpis.CLAVE_TAREAS,
-                  *(c for c, _ in kpis.CLAVES_COACHING)):
+    escribir, omitir = kpis.valores_de_la_semana(grat, semana, es_lunes, domingo)
+
+    def _ya_resuelta(clave):
+        """Estado que no depende de la regla del KPI: sin fila en KPIs [DB], o
+        lectura ya registrada. None si hay que mirar la regla."""
         info = idx.get(clave)
         if not info:
-            lecturas.append((clave, "❌ sin fila en KPIs [DB]"))
-        elif info["id"].replace("-", "") in ya:
-            lecturas.append((clave, "⏭️  ya registrada esta semana"))
-        elif clave != kpis.CLAVE_GRATITUD and not es_lunes:
-            lecturas.append((clave, "⏸️  solo se registra en lunes (hoy la página está a medias)"))
-        else:
-            lecturas.append((clave, "✅ se creará al cerrar"))
+            return "❌ sin fila en KPIs [DB]"
+        if info["id"].replace("-", "") in ya:
+            return "⏭️  ya registrada esta semana"
+        return None
+
+    lecturas = [(clave, _ya_resuelta(clave) or "✅ se creará al cerrar")
+                for clave, _valor, _nota in escribir]
+    lecturas += [(clave, _ya_resuelta(clave) or f"⏸️  {motivo}")
+                 for clave, motivo in omitir]
+    # Tareas pendientes no pasa por valores_de_la_semana: tiene su propia vía
+    # (sincronizar_tareas_pendientes), con la misma regla de solo-lunes.
+    lecturas.append((kpis.CLAVE_TAREAS, _ya_resuelta(kpis.CLAVE_TAREAS) or
+                     ("✅ se creará al cerrar" if es_lunes else
+                      "⏸️  solo se registra el lunes, al cerrar la semana")))
 
     archivada = kpis.existe_archivo(kpis._titulo_archivo(lunes))
 
@@ -267,6 +282,65 @@ def week_close():
     return 0
 
 
+def week_retry():
+    """Completa las lecturas que el cierre dejó fuera por llegar antes que el
+    dato — en la práctica, hoy: el Coaching.
+
+    Caso real dos semanas seguidas (W41 y W42): el cron cierra el lunes por la
+    mañana, Javi rellena la autoevaluación después, y esas 6 lecturas se
+    quedaban sin registrar para siempre — el cierre no reintenta, y un
+    `week close` posterior ya apunta a la semana en curso, no a la cerrada.
+
+    Solo recupera KPIs cuya fuente es FECHADA e INMUTABLE (la fila de Coaching
+    Assessment con Date = domingo), nunca los que se calculan sobre la Página
+    Fija en vivo: esa página ya es de otra semana y daría un dato falso. Por lo
+    mismo repinta solo las TARJETAS —que leen la serie histórica— y no el
+    detalle «Sistema Semanal», que se re-parsea de la página.
+    """
+    lunes = _lunes_anterior()
+    domingo = lunes + timedelta(days=6)
+    print(BLOQUE)
+    print(f"🔁 2nd Brain — Recuperar lecturas pendientes — semana "
+          f"{lunes:%d/%m/%Y} – {domingo:%d/%m/%Y}  ({kpis._semana_iso(lunes)})")
+    print(BLOQUE)
+
+    fila = kpis.obtener_coaching_semana(domingo)
+    if fila is None:
+        print(f"⏳ La autoevaluación de Coaching con Date = {domingo:%d/%m} sigue sin "
+              "rellenar — nada que recuperar.")
+        print(f"   {_url(RETRO_DB_ID)}")
+        return 1
+
+    idx = kpis.kpi_index()
+    ya = kpis.readings_de_fecha(lunes)
+    creadas = 0
+    for clave, campo in kpis.CLAVES_COACHING:
+        kpi = idx.get(clave)
+        if not kpi:
+            print(f"   ❌ sin fila en KPIs [DB] — {clave}")
+            continue
+        if kpi["id"].replace("-", "") in ya:
+            print(f"   ⏭️  ya registrada — {kpi['nombre']}")
+            continue
+        valor = fila.get(campo)
+        if valor is None:
+            print(f"   ⚠️  dimensión «{campo}» sin puntuar esa semana — {clave}")
+            continue
+        kpis.crear_reading(kpi["id"], kpi["nombre"], lunes, float(valor),
+                           None, kpi["frecuencia"])
+        print(f"   ✅ lectura creada — {clave}: {valor:g}")
+        creadas += 1
+
+    if not creadas:
+        print("\n✅ No faltaba ninguna lectura de Coaching.")
+        return 0
+
+    print(f"\n📊 Repintando las tarjetas del dashboard ({creadas} lectura(s) nueva(s))…")
+    kpis.write_tarjetas(kpis.construir_tarjetas(kpis.series_por_kpi()))
+    print(f"🔗 https://app.notion.com/p/{kpis.DASHBOARD_PAGE_ID}")
+    return 0
+
+
 def week_open(force=False):
     lunes_cerrado = _lunes_anterior()
     nombre = kpis._titulo_archivo(lunes_cerrado)
@@ -304,6 +378,7 @@ MODOS = {
     ("week", "status"): week_status,
     ("week", "fix"):    week_fix,
     ("week", "close"):  week_close,
+    ("week", "retry"):  week_retry,
     ("week", "open"):   week_open,
     ("dash", "status"): dash_status,
     ("dash", "update"): dash_update,
@@ -314,6 +389,8 @@ USO = """2nd Brain — modos
   week status    foto de la semana + preflight de cierre (no escribe)
   week fix       checklist de lo que falta, con enlaces (no escribe)
   week close     lecturas + dashboard + archivo (idempotente)
+  week retry     recupera las lecturas de la semana ya cerrada cuyo dato
+                 llegó tarde (Coaching rellenado después del cierre)
   week open      reset + renombrado de la Página Fija  [--force]
   dash status    qué se pintaría, sin tocar Notion
   dash update    repinta Salud del Sistema + KPIs Personales

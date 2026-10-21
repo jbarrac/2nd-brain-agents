@@ -10,14 +10,17 @@ on:
       modo:
         description: >-
           Qué hacer. status/fix no escriben nada. close registra las lecturas,
-          repinta el dashboard y archiva. open REEMPLAZA la Página Fija por la
-          Plantilla (se niega si la semana no está archivada).
+          repinta el dashboard y archiva. retry recupera las lecturas de la
+          semana ya cerrada cuyo dato llegó tarde (Coaching rellenado después
+          del cierre). open REEMPLAZA la Página Fija por la Plantilla (se
+          niega si la semana no está archivada).
         type: choice
         default: week-status
         options:
           - week-status
           - week-fix
           - week-close
+          - week-retry
           - week-open
           - dash-status
           - dash-update
