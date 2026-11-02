@@ -46,6 +46,14 @@ los que solo miran, y el destructivo es siempre manual.
 correr solo; resetear borra la Página Fija. Entre uno y otro hay una revisión
 humana, y por eso el cron nunca abre semana.
 
+**Pero cuando el cierre lo pide Javi, `open` va detrás sin preguntar**
+(2026-11-02). La revisión humana ya es él pidiéndolo; dejar la semana cerrada
+y sin abrir le deja sin página donde trabajar, y pasó varias semanas seguidas
+(W42, W43, W44 se quedaron sin abrir y él siguió marcando checks sobre la
+página de la semana anterior). Así que: cierre a petición → `week close` y
+acto seguido `week open`, informando de los dos. El cron sigue cerrando sin
+abrir, que es lo que protege la Página Fija de un reset sin supervisión.
+
 **Proyectos personales: DESACTIVADO desde 2026-09-28.** El KPI contaba to_do
 marcados que contuvieran "proyecto personal"/"claude", pero la Plantilla no
 tiene ninguno, así que solo podía dar 0 (W36-W39 registraron ceros vacíos).
