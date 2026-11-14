@@ -16,9 +16,9 @@ es solo lectura para ellos: aporta contexto, no recibe trabajo transaccional.
 
 | DB | Rol | ¿La usa el código? |
 |---|---|---|
-| **Tasks [DB]** | Backlog de ejecución. La única que escribe `agent.py`. | `agent.py`, `linter.py`, `groomer.py` |
-| **Life Areas [DB]** | Las 7 áreas de vida. Cada tarea pertenece a una. | `agent.py` (vía `areas.yaml`) |
-| **Goals (Long Term) [DB]** | Objetivos por área. | `linter.py` (huérfanas) |
+| **Tasks [DB]** | Backlog de ejecución. | `brief.py`, `linter.py`, `groomer.py` |
+| **Life Areas [DB]** | Las 7 áreas de vida. Cada tarea pertenece a una. | `brief.py` (vía `areas.yaml`) |
+| **Goals (Long Term) [DB]** | Objetivos por área. | `linter.py` (huérfanas), `brief.py` (prioriza los Goals en curso) |
 | **Projects [DB]** | Proyectos por área, cuelgan de Goals. | `linter.py` (huérfanas) |
 | **Coaching Assessment [DB]** (antes "Weekly Self-Assessment") | Autoevaluación semanal (Health/Mental/Social/...). Su campo `Instagram (h)` se retiró al renombrar (09/08/2026): Instagram pasó a ser 100% manual vía KPI Readings, `kpis.py` ya no lee esta DB. | — |
 | **Diario de Gratitud [DB]** | Una entrada por día de gratitud. | `kpis.py` |
@@ -33,7 +33,7 @@ recíprocas y están completas.
 
 ## Campos de Tasks [DB]
 
-`Task` (title) · `Status` (Not Started / In Progress / Done / Blocked) ·
+`Task` (title) · `Status` (Not Started / In Progress / Done / Blocked / Parked) ·
 `Type` (🤖 Agent / ⚙️ Semi / 👤 Manual) · `Priority` (🔴 Alta / 🟡 Media / 🟢 Baja) ·
 `Context` · `Output (Expected)` · `Agent Result ` · `Life Area (Link)` ·
 `Goals (Long Term) [DB]` · `Projects [DB]` · `Link` · `Attempts` · `Last Attempt`
@@ -50,9 +50,13 @@ en `config/areas.yaml`; las demás se activan al cerrar sus KPIs.
 - Todas las DBs llevan sufijo `[DB]` en el título.
 - El resultado de cada tarea se escribe en `Agent Result ` (límite ~2000
   caracteres): sé conciso y accionable.
-- Las tareas `Type=🤖 Agent` las ejecuta el agente de principio a fin; las
-  `Type=⚙️ Semi` solo se PREPARAN (draft/plan/research) para que Javi las cierre.
-- El agente corre sin supervisión vía GitHub Actions: si una tarea es ambigua
-  o requiere acción humana, es mejor devolver NEEDS_INPUT/BLOCKED que inventar.
+- `Status = Parked` significa «ahora no»: esas tareas no entran en el Foco
+  semanal. Son un descarte deliberado de Javi, no un olvido.
+- Desde el 14-nov-2026 **nada ejecuta tareas de principio a fin**. El lunes,
+  `brief.py` elige 3 tareas del backlog y prepara su primer paso en la Página
+  Fija; ejecutarlas es de Javi. El campo `Type` sigue describiendo cuánto puede
+  automatizarse cada tarea, pero ya no decide quién la coge.
+- Todo corre sin supervisión vía GitHub Actions: si falta información, es mejor
+  decir qué falta que inventarla.
 - Presupuesto de complejidad (ver `areas.yaml`): máx 3 workflows, 5 scripts,
   1 DB nueva por trimestre. Toda mejora que lo exceda debe proponer qué eliminar.

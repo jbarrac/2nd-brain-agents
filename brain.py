@@ -6,6 +6,7 @@ Un solo punto de entrada para los dos rituales del sistema:
     python brain.py week status     # foto de la semana + preflight de cierre
     python brain.py week fix        # checklist accionable de lo que falta
     python brain.py week close      # lecturas + dashboard + archivo
+    python brain.py week brief      # «Foco de la semana» en la Página Fija
     python brain.py week open       # reset + renombrado de la Página Fija
     python brain.py dash status     # qué se pintaría, sin tocar Notion
     python brain.py dash update     # repinta las dos secciones del dashboard
@@ -25,10 +26,13 @@ import sys
 from datetime import date, timedelta
 
 try:
+    # `brief` va PRIMERO a propósito: carga .env (si existe) antes de que kpis
+    # lea NOTION_TOKEN del entorno al importarse. Ver brief._cargar_env.
+    import brief
     import kpis
 except KeyError:
     sys.exit("❌ Falta la variable de entorno NOTION_TOKEN.\n"
-             "   Local:  export NOTION_TOKEN=secret_...\n"
+             "   Local:  export NOTION_TOKEN=secret_...  (o un .env en la raíz)\n"
              "   CI:     ya está como secret del repo.")
 
 # La retro semanal (Coaching Assessment [DB]): el código NO la escribe nunca —
@@ -341,6 +345,12 @@ def week_retry():
     return 0
 
 
+def week_brief(dry_run=False, con_modelo=False, force=False):
+    """Pinta «Foco de la semana» en la Página Fija: 3 tareas del backlog con el
+    primer paso ya preparado. Toda la lógica vive en brief.py."""
+    return brief.generar(dry_run=dry_run, con_modelo=con_modelo, force=force)
+
+
 def week_open(force=False):
     lunes_cerrado = _lunes_anterior()
     nombre = kpis._titulo_archivo(lunes_cerrado)
@@ -352,6 +362,15 @@ def week_open(force=False):
     if force:
         print("⚠️  --force: se abre la semana sin verificar el archivo.")
     _correr(kpis, "--reset-semana")
+    # El reset sustituye TODOS los bloques por los de la Plantilla, así que se
+    # lleva por delante el Foco. Regenerarlo aquí es lo que lo hace sobrevivir
+    # al ciclo semanal. Si falla, la semana ya está abierta: no se tumba por eso.
+    print("\n🎯 Regenerando el Foco de la semana …")
+    try:
+        brief.generar()
+    except Exception as e:
+        print(f"⚠️  El Foco no se pudo regenerar ({type(e).__name__}). "
+              f"La semana SÍ está abierta; relánzalo con `brain.py week brief`.")
     print("\n✅ Semana nueva abierta. Empieza a rellenar la Página Fija.")
     return 0
 
@@ -379,6 +398,7 @@ MODOS = {
     ("week", "fix"):    week_fix,
     ("week", "close"):  week_close,
     ("week", "retry"):  week_retry,
+    ("week", "brief"):  week_brief,
     ("week", "open"):   week_open,
     ("dash", "status"): dash_status,
     ("dash", "update"): dash_update,
@@ -391,6 +411,9 @@ USO = """2nd Brain — modos
   week close     lecturas + dashboard + archivo (idempotente)
   week retry     recupera las lecturas de la semana ya cerrada cuyo dato
                  llegó tarde (Coaching rellenado después del cierre)
+  week brief     «Foco de la semana»: 3 tareas del backlog con el primer
+                 paso preparado, al principio de la Página Fija
+                 [--dry-run] [--con-modelo] [--force]
   week open      reset + renombrado de la Página Fija  [--force]
   dash status    qué se pintaría, sin tocar Notion
   dash update    repinta Salud del Sistema + KPIs Personales
@@ -406,7 +429,12 @@ def main():
         print(USO)
         return 2
     fn = MODOS[(args[0], args[1])]
-    return fn(force=force) if fn is week_open else fn()
+    if fn is week_open:
+        return fn(force=force)
+    if fn is week_brief:
+        return fn(dry_run="--dry-run" in sys.argv,
+                  con_modelo="--con-modelo" in sys.argv, force=force)
+    return fn()
 
 
 if __name__ == "__main__":

@@ -6,8 +6,15 @@ Agente ejecutor que lee tareas de Notion, ejecuta UNA por invocación con Claude
 scheduler (solo manual por ahora, sin cron).
 
 ## Arquitectura
-- `agent.py` — loop del agente (query → lock → ejecutar → escribir resultado)
-- `prompts/executor.md` — prompt parametrizado con variables `{{...}}`
+- `brief.py` — **«Foco de la semana»**. Cada lunes elige 3 tareas del backlog,
+  prepara el primer paso de cada una con el modelo y las pinta en una sección
+  gestionada al principio de la Página Fija. Sustituye a `agent.py`
+  (14-nov-2026), que ejecutaba 1 tarea/semana y dejaba el resultado en
+  «Agent Result », un campo que Javi no abre. Prompt: `prompts/brief.md`.
+- ~~`agent.py`~~ — **retirado a `scripts-puntuales/` el 14-nov-2026.** No se
+  borra: su loop (lock con Attempts, áreas activas, proposed_tasks) es la
+  referencia si algún día se quiere volver a ejecutar tareas de principio a
+  fin. `prompts/executor.md` se queda por lo mismo.
 - `config/areas.yaml` — misión/KPIs/constraints por área + `notion_page_id` y flag `active`
 - `CONTEXT.md` — contexto del sistema inyectado como `{{CONTEXT_MD}}` en el prompt
 - `brain.py` — **punto de entrada único de los modos**. No duplica lógica:
@@ -38,6 +45,7 @@ los que solo miran, y el destructivo es siempre manual.
 | `week fix` | ❌ | Checklist de huecos con enlace a Notion. **No rellena datos**: inventarlos rompería la serie |
 | `week close` | ✅ | Archiva la Página Fija → registra lecturas → repinta el dashboard. Idempotente |
 | `week retry` | ✅ | Recupera las lecturas de la semana **ya cerrada** cuyo dato llegó tarde (Coaching rellenado después del cierre). Solo fuentes fechadas e inmutables; repinta solo las tarjetas |
+| `week brief` | ✅ | «Foco de la semana»: 3 tareas del backlog con el primer paso preparado, al principio de la Página Fija. `--dry-run` (solo selección, sin modelo), `--con-modelo` (preview completo), `--force` |
 | `week open` | ⚠️ | Reset + renombrado desde la Plantilla. **Único destructivo.** Se niega si la semana anterior no está archivada (`--force` lo salta) |
 | `dash status` | ❌ | Lo que pintarían linter y kpis, sin tocar Notion |
 | `dash update` | ✅ | Repinta «Salud del Sistema» + «KPIs Personales». No archiva (`kpis.py --no-archivo`) |
@@ -70,6 +78,26 @@ Coaching Assessment con Date = domingo); nunca los que se calculan sobre la
 Página Fija en vivo, que ya es de otra semana. Por eso repinta solo las
 tarjetas (leen la serie histórica) y no el detalle «Sistema Semanal».
 
+**Tres invariantes del «Foco de la semana» (`brief.py`) que hay que mantener:**
+
+1. **Invisible para `checks_semanal`.** Sus casillas NO deben contar en el KPI.
+   No hay filtro explícito: se sostiene en la forma del parser —
+   `kpis.parse_semana_actual()` solo baja a los `heading_2` cuyo texto empieza
+   por un día de la semana, así que un bloque de primer nivel (el callout del
+   Foco) es invisible. **Por eso el Foco nunca debe ir DENTRO de un día.**
+   Lo cubre `tests/test_brief.py`, que es lo único que cazaría la regresión.
+2. **Idempotente por semana ISO.** El callout lleva la semana en el título; si
+   ya existe el de la semana en curso, no se regenera ni se llama al modelo.
+   Correrlo dos veces deja UNA sección, no dos.
+3. **No filtra contenido en CI.** El repo es público y los logs de Actions
+   también: en CI solo se imprimen recuentos e IDs, nunca títulos ni texto de
+   las tareas. El detalle completo solo se ve en local.
+
+El reset de `week open` borra TODOS los bloques de la Página Fija, el Foco
+incluido — por eso `week_open()` lo regenera al terminar. Si esa regeneración
+falla, la semana queda abierta igualmente y se avisa: abrir la semana importa
+más que el Foco.
+
 **Regla de oro de los KPIs semanales: se registran SOLO el lunes.** Incluida
 Gratitud — su fuente es independiente, pero el valor es acumulado, y
 escribirla cualquier otro día congela el conteo parcial de ese día para toda
@@ -83,8 +111,10 @@ avisa si falta la entrada de la semana, pero no la redacta: una reflexión
 escrita por una máquina no es una reflexión.
 
 ## Workflows (presupuesto Internal: máx 3 — al límite)
-- `scheduler.yml` — executor (`agent.py`). Cron lunes 04:30 UTC + `workflow_dispatch`.
-  Corre **antes** del cierre (05:00) para que el dashboard ya refleje la tarea.
+- `scheduler.yml` — «🎯 Foco de la Semana» (`brain.py week brief`). Cron lunes
+  04:30 UTC + `workflow_dispatch` con inputs `dry_run` y `force`. Corre **antes**
+  del cierre (05:00) para que el Foco ya esté puesto cuando Javi abre la página.
+  Hasta el 14-nov-2026 este workflow ejecutaba `agent.py`.
 - `linter.yml` — «🗓️ Cierre Semanal & Dashboard»: ejecuta `brain.py <modo>`.
   Cron lunes 05:00 UTC → `week-close`. Los 6 modos se eligen con el input `modo`
   en `workflow_dispatch` — así no hace falta un 4º workflow, que no cabe.
@@ -177,7 +207,8 @@ pueden contradecirse. La que vale para el código es siempre la del lado de
 Tasks/Projects (`Life Area (Link)`, `Life Areas [DB]`).
 
 ### Campos vinculados al código
-Centralizados en el diccionario `FIELDS` de `agent.py`. Si renombras un campo
+Centralizados en el diccionario `FIELDS` de `brief.py` (y en el de
+`scripts-puntuales/agent.py`, si alguna vez se recupera). Si renombras un campo
 en Notion, actualiza **solo** el valor correspondiente en `FIELDS`.
 
 | Clave | Nombre en Notion | Tipo | Uso |
@@ -194,7 +225,8 @@ en Notion, actualiza **solo** el valor correspondiente en `FIELDS`.
 | `last_attempt` | `Last Attempt` | date | Lock anti-duplicados |
 
 ### Valores de selects
-- **Status:** Not Started, In Progress, Done, Blocked
+- **Status:** Not Started, In Progress, Done, Blocked, **Parked** (añadido el
+  11-nov-2026 = «ahora no»; `brief.py` nunca lo elige para el Foco)
 - **Type:** 🤖 Agent, ⚙️ Semi, 👤 Manual
 - **Priority:** 🔴 Alta, 🟡 Media, 🟢 Baja
 
@@ -216,8 +248,10 @@ en Notion, actualiza **solo** el valor correspondiente en `FIELDS`.
 - **`kpis.py` duplica a mano los objetivos de `config/areas.yaml`**
   (`META_GRATITUD`, `META_CLAUDE`, `META_CHECKS`). Si cambias un KPI en
   `areas.yaml`, cámbialo también ahí. Deuda conocida y aceptada.
-- `Tasks [DB]` tiene campos que el código **no** usa: `Link`,
-  `Goals (Long Term) [DB]`, `Projects [DB]`. El campo `Section` ya no existe.
+- `Tasks [DB]` tiene campos que el código **no** usa: `Link` y `Projects [DB]`.
+  `Goals (Long Term) [DB]` **sí** se usa desde el 14-nov-2026: `brief.py` lo lee
+  para priorizar las tareas que cuelgan de un Goal en curso. El campo `Section`
+  ya no existe.
 - Las vistas de Notion filtradas por relación son solo UI: la API no las ve.
 - En `create_pages` las relaciones no se setean; hay que hacer un `update` aparte.
 

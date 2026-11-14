@@ -1,32 +1,51 @@
-name: 🤖 Agente Ejecutor de Tareas
- 
+name: 🎯 Foco de la Semana
+
+# Sustituye al antiguo «Agente Ejecutor de Tareas» (agent.py, retirado a
+# scripts-puntuales/ el 14-nov-2026). Motivo: agent.py ejecutaba 1 tarea/semana
+# y dejaba el resultado en el campo «Agent Result » de Notion, que Javi no abre.
+# Este escribe donde sí mira: la Página Fija de Planificación Semanal.
+
 on:
-  workflow_dispatch:        # además, lanzable a mano cuando quieras
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Solo mostrar la selección, sin escribir en Notion'
+        type: boolean
+        default: false
+      force:
+        description: 'Regenerar aunque ya exista el Foco de esta semana ISO'
+        type: boolean
+        default: false
   schedule:
     # Lunes 04:30 UTC = 06:30 Madrid (verano) / 05:30 (invierno).
-    # Se ejecuta ANTES del linter (05:00) para que el dashboard semanal ya
-    # refleje la tarea que acabe de procesar. Cadencia: ~1 tarea/semana.
+    # ANTES del cierre semanal (05:00): así el Foco ya está puesto cuando Javi
+    # abre la página por la mañana, sin que tenga que hacer nada.
     - cron: "30 4 * * 1"
- 
+
 jobs:
-  run-agent:
+  brief:
     runs-on: ubuntu-latest
- 
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
- 
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
- 
+
       - name: Instalar dependencias
         run: pip install -r requirements.txt
- 
-      - name: Ejecutar agente
+
+      # El repo es público y estos logs también: brief.py detecta CI y no
+      # imprime títulos ni contenido de las tareas, solo recuentos e IDs.
+      - name: Generar el Foco de la semana
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NOTION_TASKS_DB_ID: ${{ secrets.NOTION_TASKS_DB_ID }}
-        run: python agent.py
+        run: >-
+          python brain.py week brief
+          ${{ inputs.dry_run && '--dry-run' || '' }}
+          ${{ inputs.force && '--force' || '' }}
