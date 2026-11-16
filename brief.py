@@ -79,6 +79,17 @@ SENTINEL        = "🎯 Foco de la semana"
 # El repo es público: en Actions no se imprime contenido de las tareas.
 EN_CI = bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
 
+
+def _detalle_error(r):
+    """Cómo se reporta un error de la API de Notion.
+
+    En CI, SOLO el código. El cuerpo de un 400 de Notion cita el payload que
+    se le mandó —y ese payload lleva los títulos de las tareas y el texto del
+    Foco—, así que imprimirlo entero filtraría en unos logs públicos justo lo
+    que la invariante 3 protege en el camino normal.
+    """
+    return str(r.status_code) if EN_CI else f"{r.status_code} {r.text}"
+
 # Estados que nunca son candidatos. `Parked` (añadido el 11-nov-2026) es
 # explícitamente «ahora no»: respetarlo es la mitad del valor del Foco.
 ESTADOS_CANDIDATOS = ("Not Started", "In Progress")
@@ -313,7 +324,7 @@ def escribir_seccion(bloque):
     r = requests.patch(f"https://api.notion.com/v1/blocks/{kpis.PLANNING_PAGE_ID}/children",
                        headers=kpis.NOTION_HEADERS, json=cuerpo)
     if not r.ok:
-        print(f"❌ Error escribiendo el Foco: {r.status_code} {r.text}")
+        print(f"❌ Error escribiendo el Foco: {_detalle_error(r)}")
     r.raise_for_status()
     print(f"✨ «{SENTINEL}» publicado en la Página Fija.")
 
@@ -327,7 +338,7 @@ def marcar_en_curso(tareas):
                            headers=kpis.NOTION_HEADERS,
                            json={"properties": {FIELDS["status"]: {"select": {"name": "In Progress"}}}})
         if not r.ok:
-            print(f"❌ Error marcando In Progress: {r.status_code} {r.text}")
+            print(f"❌ Error marcando In Progress: {_detalle_error(r)}")
         r.raise_for_status()
 
 # ── Entrada ────────────────────────────────────────────────────────────────────
@@ -357,6 +368,10 @@ def generar(dry_run=False, con_modelo=False, force=False):
         return 0
 
     # En CI no se imprime contenido: el repo es público y los logs también.
+    # Sí los IDs: no revelan nada por sí solos y son lo único que permite
+    # auditar desde fuera QUÉ eligió el Foco sin volcar los títulos al log.
+    if EN_CI:
+        print("   elegidas: " + ", ".join(t["id"] for t in elegidas))
     if not EN_CI:
         for i, t in enumerate(elegidas, 1):
             goal = next((goals_ip[_norm(g)] for g in t["goals"] if _norm(g) in goals_ip), None)
