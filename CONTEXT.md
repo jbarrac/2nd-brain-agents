@@ -7,7 +7,7 @@ Sistema personal de organización de Javi. La raíz en Notion se llama
 |---|---|---|
 | 🧠 **2nd Brain** | Conocimiento: principios, identidad, aprendizajes, specs de cómo debe comportarse cada sistema o agente. | Se escribe cuando aprendes algo |
 | 📋 **LifeOS** | Ejecución: Goals, Projects, Tasks, Habits, autoevaluaciones y KPIs. Fuente de verdad única de tareas. | Cambia a diario |
-| 🗄️ **2NB Databases** | Contenedor de las 8 bases de datos. Sin lógica propia. | Estable |
+| 🗄️ **2NB Databases** | Contenedor de las 11 bases de datos. Sin lógica propia. | Estable |
 
 Los agentes y automatizaciones leen y escriben en **LifeOS**. El **2nd Brain**
 es solo lectura para ellos: aporta contexto, no recibe trabajo transaccional.
@@ -48,8 +48,9 @@ en `config/areas.yaml`; las demás se activan al cerrar sus KPIs.
 
 - Idioma de los outputs: español. Nombres de entidades y campos: inglés.
 - Todas las DBs llevan sufijo `[DB]` en el título.
-- El resultado de cada tarea se escribe en `Agent Result ` (límite ~2000
-  caracteres): sé conciso y accionable.
+- Lo que prepares se pinta en la **Página Fija** de la semana, que Javi abre
+  cada día — no en `Agent Result `, que ya no lee nadie desde que se retiró
+  `agent.py`. Sé conciso y accionable.
 - `Status = Parked` significa «ahora no»: esas tareas no entran en el Foco
   semanal. Son un descarte deliberado de Javi, no un olvido.
 - Desde el 14-nov-2026 **nada ejecuta tareas de principio a fin**. El lunes,

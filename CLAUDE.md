@@ -62,6 +62,12 @@ página de la semana anterior). Así que: cierre a petición → `week close` y
 acto seguido `week open`, informando de los dos. El cron sigue cerrando sin
 abrir, que es lo que protege la Página Fija de un reset sin supervisión.
 
+**El denominador de `checks_semanal` cambia con la Plantilla.** Cada check que
+se añade a los 7 días suma 7: 85 → 92 (Comida Sana, 5-oct-2026) → 99 («Comida
+Sana, sin Fritos» y «Sin Alcohol» como dos checks, 23-nov-2026, efectivo desde
+W48). También baja cuando Javi borra el bloque Facephi de un día que no trabaja.
+El porcentaje no es comparable entre semanas con denominadores distintos.
+
 **Proyectos personales: DESACTIVADO desde 2026-09-28.** El KPI contaba to_do
 marcados que contuvieran "proyecto personal"/"claude", pero la Plantilla no
 tiene ninguno, así que solo podía dar 0 (W36-W39 registraron ceros vacíos).
@@ -91,7 +97,14 @@ tarjetas (leen la serie histórica) y no el detalle «Sistema Semanal».
    Correrlo dos veces deja UNA sección, no dos.
 3. **No filtra contenido en CI.** El repo es público y los logs de Actions
    también: en CI solo se imprimen recuentos e IDs, nunca títulos ni texto de
-   las tareas. El detalle completo solo se ve en local.
+   las tareas. El detalle completo solo se ve en local. Incluye los errores:
+   `_detalle_error()` imprime solo el código de estado en CI, porque el cuerpo
+   de un 400 de Notion cita el payload enviado (títulos incluidos). Para
+   auditar qué eligió el Foco, el dry-run en CI lista los IDs y los títulos se
+   resuelven por el conector de Notion, nunca en el log.
+   ⚠️ Los logs **antiguos** de `scheduler.yml` (de `agent.py`, hasta el
+   9-nov-2026) sí contienen títulos de tareas: `agent.py` imprimía
+   `🎯 Tarea: {título}` en cada ejecución.
 
 El reset de `week open` borra TODOS los bloques de la Página Fija, el Foco
 incluido — por eso `week_open()` lo regenera al terminar. Si esa regeneración
@@ -116,8 +129,18 @@ escrita por una máquina no es una reflexión.
   del cierre (05:00) para que el Foco ya esté puesto cuando Javi abre la página.
   Hasta el 14-nov-2026 este workflow ejecutaba `agent.py`.
 - `linter.yml` — «🗓️ Cierre Semanal & Dashboard»: ejecuta `brain.py <modo>`.
-  Cron lunes 05:00 UTC → `week-close`. Los 6 modos se eligen con el input `modo`
+  Cron lunes 05:00 UTC → `week-close`. Los modos se eligen con el input `modo`
   en `workflow_dispatch` — así no hace falta un 4º workflow, que no cabe.
+  Instala `requirements.txt` y lleva `ANTHROPIC_API_KEY` **porque `week open`
+  regenera el Foco** tras el reset: sin las dos cosas, la semana se abre pero
+  el Foco se queda sin poner (pasó en W47, 16-nov-2026).
+
+**El cron de `scheduler.yml` escribe el Foco cada lunes sin revisión previa.**
+Lo aprobó Javi el 23-nov-2026, tras ver la selección. Antes de eso el cron
+escribió el Foco de W47 sin su OK (16-nov), porque se pusheó el commit del Foco
+con el cron ya activo y sin avisar — y de paso pasó una tarea de Not Started a
+In Progress. Lección: **activar un cron que escribe en Notion es una decisión de
+Javi, no un efecto secundario de un push.**
 - `groomer.yml` — borradores (`groomer.py`), con input `dry_run`.
 
 ## Dónde va cada cosa
@@ -136,15 +159,18 @@ Notion **en esa misma sesión**. Si no está aquí o en Notion, no existe.
 Nada de documentos de handoff entre chats: caducan y desorientan.
 
 ## Stack
-- **GitHub Actions** — ejecuta `agent.py` vía `workflow_dispatch`
+- **GitHub Actions** — 3 workflows con cron los lunes (ver arriba). `agent.py`
+  ya no corre en ninguno desde el 14-nov-2026.
 - **Python** — `anthropic` (SDK oficial) + `requests` (Notion) + `pyyaml`
 - **Notion API** — base de datos de tareas
 - **Anthropic API** — modelo `claude-sonnet-4-6` con structured outputs (JSON garantizado)
 
 ## Secrets en GitHub Actions
 - `NOTION_TOKEN` — API key de la integración "2nd Brain Agent" en Notion
-- `ANTHROPIC_API_KEY` — API key de Anthropic (workspace: Javi's Individual Org)
-- `NOTION_TASKS_DB_ID` — opcional; `agent.py` tiene el ID por defecto
+- `ANTHROPIC_API_KEY` — API key de Anthropic (workspace: Javi's Individual Org).
+  La usan `scheduler.yml` (`week brief`), `linter.yml` (`week open` regenera el
+  Foco) y `groomer.yml`.
+- `NOTION_TASKS_DB_ID` — opcional; `linter.py` y `brief.py` tienen el ID por defecto
 
 ## Notion — inventario de IDs
 
@@ -230,7 +256,10 @@ en Notion, actualiza **solo** el valor correspondiente en `FIELDS`.
 - **Type:** 🤖 Agent, ⚙️ Semi, 👤 Manual
 - **Priority:** 🔴 Alta, 🟡 Media, 🟢 Baja
 
-## Flujo del agente (una invocación)
+## Flujo del agente retirado (`scripts-puntuales/agent.py`)
+**Histórico — no corre desde el 14-nov-2026.** Se conserva como referencia por
+si algún día se vuelve a ejecutar tareas de principio a fin.
+
 1. Query: Status=Not Started, Type=🤖 Agent, Attempts < 3 (o vacío)
 2. Ordena por Priority y antigüedad; coge la top 1
 3. Lock: Status=In Progress + Last Attempt=now
