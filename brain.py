@@ -347,7 +347,7 @@ def week_retry():
 
 def week_brief(dry_run=False, con_modelo=False, force=False):
     """Pinta «Foco de la semana» en la Página Fija: 3 tareas del backlog con el
-    primer paso ya preparado. Toda la lógica vive en brief.py."""
+    objetivo propuesto en una línea. Toda la lógica vive en brief.py."""
     return brief.generar(dry_run=dry_run, con_modelo=con_modelo, force=force)
 
 

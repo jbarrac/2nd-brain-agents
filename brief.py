@@ -7,8 +7,12 @@ resultado en el campo «Agent Result » de Notion, que Javi no abre. Lo que sí
 abre cada día es la Página Fija de Planificación Semanal — así que el informe
 va ahí.
 
-Cada lunes elige 3 tareas del backlog, prepara el primer paso de cada una con
-el modelo, y las pinta en una sección gestionada al principio de la página.
+Cada lunes elige 3 tareas del backlog y propone un objetivo corto para cada
+una (una línea, la escribe el modelo). Se pintan como 3 casillas en una sección
+gestionada al principio de la página. Es una PROPUESTA que Javi valida: no toca
+el estado de las tareas. Hasta el 23-nov-2026 las pasaba a In Progress y añadía
+un «por qué» y un «primer paso» de varias líneas; Javi pidió quitar todo ese
+texto y no decidir por él.
 
 Tres propiedades que hay que mantener al tocar esto:
 
@@ -36,7 +40,6 @@ Uso:
 import json
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 
 RAIZ = Path(__file__).parent
@@ -73,7 +76,9 @@ GOALS_DB_ID = "4b9b63a4805448bf834d981934f05bec"
 
 MODEL           = "claude-sonnet-4-6"
 N_TAREAS        = 3
-MAX_PRIMER_PASO = 600
+# Una línea por objetivo, con tope en código y no solo en el prompt: el modelo
+# puede desobedecer, la Página Fija no debe volver a llenarse de texto.
+MAX_OBJETIVO    = 60
 SENTINEL        = "🎯 Foco de la semana"
 
 # El repo es público: en Actions no se imprime contenido de las tareas.
@@ -111,10 +116,9 @@ FIELDS = {
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
-        "porque":      {"type": "string"},
-        "primer_paso": {"type": "string"},
+        "objetivo": {"type": "string"},
     },
-    "required": ["porque", "primer_paso"],
+    "required": ["objetivo"],
     "additionalProperties": False,
 }
 
@@ -242,11 +246,22 @@ def render_prompt(tarea, cfg_area, goal):
     return plantilla
 
 
+def _recortar(texto, n=MAX_OBJETIVO):
+    """Una sola línea de como mucho `n` caracteres, cortando por palabra."""
+    texto = " ".join((texto or "").split())
+    if len(texto) <= n:
+        return texto
+    corte = texto[:n - 1].rsplit(" ", 1)[0]
+    return corte.rstrip(" ,.;:") + "…"
+
+
 def preparar(tarea, cfg_area, goal):
-    """Una llamada al modelo por tarea. Si falla, la tarea sigue apareciendo en
-    el Foco sin primer paso: un informe incompleto es mejor que ninguno."""
-    from anthropic import Anthropic
+    """Una llamada al modelo por tarea → el objetivo en una línea. Si falla o
+    devuelve vacío, se usa el propio título de la tarea: la casilla sale igual,
+    solo que sin reformular. El import va dentro del try por lo mismo: sin el
+    paquete `anthropic`, el Foco degrada a títulos en vez de no salir."""
     try:
+        from anthropic import Anthropic
         respuesta = Anthropic().messages.create(
             model=MODEL,
             max_tokens=16000,
@@ -255,15 +270,18 @@ def preparar(tarea, cfg_area, goal):
             messages=[{"role": "user", "content": render_prompt(tarea, cfg_area, goal)}],
         )
         datos = json.loads(next(b.text for b in respuesta.content if b.type == "text"))
-        return (datos["porque"].strip(), datos["primer_paso"].strip()[:MAX_PRIMER_PASO])
+        objetivo = _recortar(datos.get("objetivo"))
+        if objetivo:
+            return objetivo
     except Exception as e:
-        print(f"   ⚠️  No se pudo preparar el primer paso ({type(e).__name__}).")
-        return ("", "")
+        print(f"   ⚠️  No se pudo proponer el objetivo ({type(e).__name__}); se usa el título.")
+    return _recortar(tarea["titulo"])
 
 # ── Pintado en la Página Fija ──────────────────────────────────────────────────
 
 def _titulo_seccion(semana_iso):
-    return f"{SENTINEL} · {semana_iso}"
+    # «propuesta»: deja claro que las 3 casillas son para validar, no decididas.
+    return f"{SENTINEL} · {semana_iso} · propuesta"
 
 
 def buscar_seccion():
@@ -277,27 +295,23 @@ def buscar_seccion():
     return None, ""
 
 
-def _to_do_tarea(tarea):
-    """Casilla con el título enlazado a su página en Tasks [DB]."""
+def _to_do_objetivo(tarea, objetivo):
+    """Casilla con el objetivo, enlazado a la tarea de la que sale: corto en la
+    página, pero a un clic del detalle para validarlo."""
     return {"object": "block", "type": "to_do", "to_do": {
         "checked": False,
         "rich_text": [{"type": "text",
-                       "text": {"content": tarea["titulo"][:1900], "link": {"url": tarea["url"]}}}],
+                       "text": {"content": objetivo, "link": {"url": tarea["url"]}}}],
     }}
 
 
 def construir_bloques(preparadas, semana_iso):
-    """El callout entero, con sus hijos. Se repinta completo en cada ejecución."""
-    hijos = [kpis._p(f"Generado {datetime.now():%d/%m/%Y %H:%M} · se regenera cada lunes. "
-                     f"Estas casillas no cuentan para el KPI de checks.")]
-    for tarea, porque, primer_paso in preparadas:
-        hijos.append(_to_do_tarea(tarea))
-        if porque:
-            hijos.append(kpis._bullet(f"Por qué ahora: {porque}"))
-        if primer_paso:
-            hijos.append(kpis._bullet(f"Primer paso: {primer_paso}"))
-    if not preparadas:
-        hijos.append(kpis._p("No hay tareas candidatas esta semana."))
+    """El callout entero: el título y una casilla por objetivo, NADA MÁS. Sin
+    párrafos ni viñetas: Javi lo pidió así el 23-nov-2026 (el Foco de W48 ocupaba
+    media pantalla). Se repinta completo en cada ejecución."""
+    hijos = [_to_do_objetivo(tarea, objetivo) for tarea, objetivo in preparadas]
+    if not hijos:
+        hijos = [kpis._p("No hay tareas candidatas esta semana.")]
 
     return {"object": "block", "type": "callout", "callout": {
         "rich_text": [kpis._rt(_titulo_seccion(semana_iso), bold=True)],
@@ -328,18 +342,6 @@ def escribir_seccion(bloque):
     r.raise_for_status()
     print(f"✨ «{SENTINEL}» publicado en la Página Fija.")
 
-
-def marcar_en_curso(tareas):
-    """Pasa las elegidas a In Progress. No toca ningún otro campo."""
-    for t in tareas:
-        if t["status"] == "In Progress":
-            continue
-        r = requests.patch(f"https://api.notion.com/v1/pages/{t['id']}",
-                           headers=kpis.NOTION_HEADERS,
-                           json={"properties": {FIELDS["status"]: {"select": {"name": "In Progress"}}}})
-        if not r.ok:
-            print(f"❌ Error marcando In Progress: {_detalle_error(r)}")
-        r.raise_for_status()
 
 # ── Entrada ────────────────────────────────────────────────────────────────────
 
@@ -383,26 +385,28 @@ def generar(dry_run=False, con_modelo=False, force=False):
 
     if dry_run and not con_modelo:
         print("\n🔍 Dry-run de selección. Añade --con-modelo para ver también "
-              "el primer paso preparado.")
+              "los objetivos propuestos.")
         return 0
 
     preparadas = []
     for t in elegidas:
         goal = next((goals_ip[_norm(g)] for g in t["goals"] if _norm(g) in goals_ip), None)
-        porque, primer_paso = preparar(t, _config_area(areas, t["areas"]), goal)
-        preparadas.append((t, porque, primer_paso))
+        objetivo = preparar(t, _config_area(areas, t["areas"]), goal)
+        preparadas.append((t, objetivo))
         if not EN_CI:
-            print(f"\n  ▸ {t['titulo']}")
-            print(f"    porque      {porque or '—'}")
-            print(f"    primer paso {primer_paso or '—'}")
+            print(f"\n  ▸ {objetivo}\n    ← {t['titulo']}")
+    if EN_CI:
+        # Longitudes, no texto: lo único que se puede auditar en un log público
+        # sobre si el Foco sigue siendo corto.
+        print("   objetivos: " + ", ".join(f"{len(o)} car." for _, o in preparadas))
 
     if dry_run:
         print("\n🔍 Dry-run: nada escrito en Notion.")
         return 0
 
     escribir_seccion(construir_bloques(preparadas, semana_iso))
-    marcar_en_curso(elegidas)
-    print(f"✅ {len(elegidas)} tarea(s) en In Progress.")
+    print(f"✅ Propuesta de {len(preparadas)} objetivo(s) publicada. "
+          f"El estado de las tareas no se toca: validarlas es de Javi.")
     print(f"🔗 https://app.notion.com/p/{kpis.PLANNING_PAGE_ID}")
     return 0
 

@@ -151,5 +151,53 @@ check("checks_semanal da EXACTAMENTE lo mismo con y sin la sección", sin_foco =
 check("el parser no cuenta las 3 casillas del Foco", con_foco[1] == 3)
 check("sigue viendo los días reales", con_foco[2] == 2)
 
+
+# ── 3. Formato: una propuesta de 3 líneas, sin texto ─────────────────────────
+# Javi lo pidió el 23-nov-2026: el Foco ocupaba media pantalla con «por qué» y
+# «primer paso». Estos checks impiden que vuelva a crecer sin que nadie lo vea.
+print("\n3. Formato de la propuesta")
+
+tres = [(t("tarea-a"), "Cerrar el presupuesto del trimestre"),
+        (t("tarea-b"), "Preparar la reunión de planificación"),
+        (t("tarea-c"), "Objetivo por definir en ventas")]
+bloque = brief.construir_bloques(tres, "W49-2026")
+hijos = bloque["callout"]["children"]
+titulo = "".join(r["text"]["content"] for r in bloque["callout"]["rich_text"])
+
+check("es un callout de primer nivel (invisible para el KPI)", bloque["type"] == "callout")
+check("exactamente 3 hijos, y los 3 son casillas", len(hijos) == 3 and all(h["type"] == "to_do" for h in hijos))
+check("ningún párrafo ni viñeta de texto", not any(h["type"] in ("paragraph", "bulleted_list_item") for h in hijos))
+check("ninguna casilla viene marcada", not any(h["to_do"]["checked"] for h in hijos))
+check("cada casilla enlaza a su tarea",
+      [h["to_do"]["rich_text"][0]["text"]["link"]["url"] for h in hijos] == [x["url"] for x, _ in tres])
+check("el título lleva la semana (idempotencia) y dice que es propuesta",
+      "W49-2026" in titulo and "propuesta" in titulo and brief.SENTINEL in titulo)
+
+largo = "Revisar de arriba abajo todo el proceso de planificación trimestral del equipo de ventas"
+r = brief._recortar(largo)
+check(f"_recortar deja una línea de ≤ {brief.MAX_OBJETIVO} caracteres", len(r) <= brief.MAX_OBJETIVO and r.endswith("…"))
+check("_recortar no toca lo que ya es corto", brief._recortar("Sin Alcohol") == "Sin Alcohol")
+
+# preparar() con un cliente falso: nada sale a la red.
+class _Resp:
+    def __init__(self, texto): self.content = [types.SimpleNamespace(type="text", text=texto)]
+
+def _cliente(respuesta=None, error=None):
+    class _Mensajes:
+        def create(self, **_):
+            if error: raise error
+            return _Resp(respuesta)
+    return types.SimpleNamespace(Anthropic=lambda: types.SimpleNamespace(messages=_Mensajes()))
+
+tarea = t("Revisar el proceso de planificación trimestral del equipo")
+sys.modules["anthropic"] = _cliente(respuesta='{"objetivo": "' + largo + '"}')
+check("si el modelo se enrolla, el tope de código lo corta", len(brief.preparar(tarea, {}, None)) <= brief.MAX_OBJETIVO)
+sys.modules["anthropic"] = _cliente(error=RuntimeError("caída"))
+check("si el modelo falla, sale el título de la tarea", brief.preparar(tarea, {}, None) == brief._recortar(tarea["titulo"]))
+sys.modules["anthropic"] = _cliente(respuesta='{"objetivo": "  "}')
+check("si el modelo devuelve vacío, sale el título de la tarea", brief.preparar(tarea, {}, None) == brief._recortar(tarea["titulo"]))
+
+check("el Foco ya no cambia el estado de las tareas (era decidir por Javi)", not hasattr(brief, "marcar_en_curso"))
+
 print("\n" + ("❌ FALLOS: " + ", ".join(fallos) if fallos else "✅ Todo correcto"))
 sys.exit(1 if fallos else 0)

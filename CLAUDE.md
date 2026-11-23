@@ -6,9 +6,12 @@ Agente ejecutor que lee tareas de Notion, ejecuta UNA por invocación con Claude
 scheduler (solo manual por ahora, sin cron).
 
 ## Arquitectura
-- `brief.py` — **«Foco de la semana»**. Cada lunes elige 3 tareas del backlog,
-  prepara el primer paso de cada una con el modelo y las pinta en una sección
-  gestionada al principio de la Página Fija. Sustituye a `agent.py`
+- `brief.py` — **«Foco de la semana»**. Cada lunes elige 3 tareas del backlog
+  y las pinta al principio de la Página Fija como **una propuesta de 3 casillas,
+  una línea cada una** (el modelo solo reformula el título como objetivo corto,
+  máx. 60 caracteres con tope en código). No toca el estado de las tareas:
+  validarlas es de Javi. Hasta el 23-nov-2026 las pasaba a In Progress y añadía
+  «por qué» y «primer paso» de varias líneas; Javi pidió quitarlo. Sustituye a `agent.py`
   (14-nov-2026), que ejecutaba 1 tarea/semana y dejaba el resultado en
   «Agent Result », un campo que Javi no abre. Prompt: `prompts/brief.md`.
 - ~~`agent.py`~~ — **retirado a `scripts-puntuales/` el 14-nov-2026.** No se
@@ -45,7 +48,7 @@ los que solo miran, y el destructivo es siempre manual.
 | `week fix` | ❌ | Checklist de huecos con enlace a Notion. **No rellena datos**: inventarlos rompería la serie |
 | `week close` | ✅ | Archiva la Página Fija → registra lecturas → repinta el dashboard. Idempotente |
 | `week retry` | ✅ | Recupera las lecturas de la semana **ya cerrada** cuyo dato llegó tarde (Coaching rellenado después del cierre). Solo fuentes fechadas e inmutables; repinta solo las tarjetas |
-| `week brief` | ✅ | «Foco de la semana»: 3 tareas del backlog con el primer paso preparado, al principio de la Página Fija. `--dry-run` (solo selección, sin modelo), `--con-modelo` (preview completo), `--force` |
+| `week brief` | ✅ | «Foco de la semana»: propuesta de 3 objetivos (una casilla y una línea cada uno, enlazada a su tarea) al principio de la Página Fija. No cambia el estado de las tareas. `--dry-run` (solo selección, sin modelo), `--con-modelo` (preview completo), `--force` |
 | `week open` | ⚠️ | Reset + renombrado desde la Plantilla. **Único destructivo.** Se niega si la semana anterior no está archivada (`--force` lo salta) |
 | `dash status` | ❌ | Lo que pintarían linter y kpis, sin tocar Notion |
 | `dash update` | ✅ | Repinta «Salud del Sistema» + «KPIs Personales». No archiva (`kpis.py --no-archivo`) |
@@ -139,7 +142,7 @@ escrita por una máquina no es una reflexión.
 Lo aprobó Javi el 23-nov-2026, tras ver la selección. Antes de eso el cron
 escribió el Foco de W47 sin su OK (16-nov), porque se pusheó el commit del Foco
 con el cron ya activo y sin avisar — y de paso pasó una tarea de Not Started a
-In Progress. Lección: **activar un cron que escribe en Notion es una decisión de
+In Progress (eso ya no puede pasar: desde el 23-nov el Foco no toca estados). Lección: **activar un cron que escribe en Notion es una decisión de
 Javi, no un efecto secundario de un push.**
 - `groomer.yml` — borradores (`groomer.py`), con input `dry_run`.
 

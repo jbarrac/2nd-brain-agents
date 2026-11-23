@@ -48,14 +48,14 @@ en `config/areas.yaml`; las demás se activan al cerrar sus KPIs.
 
 - Idioma de los outputs: español. Nombres de entidades y campos: inglés.
 - Todas las DBs llevan sufijo `[DB]` en el título.
-- Lo que prepares se pinta en la **Página Fija** de la semana, que Javi abre
+- Lo que propongas se pinta en la **Página Fija** de la semana, que Javi abre
   cada día — no en `Agent Result `, que ya no lee nadie desde que se retiró
-  `agent.py`. Sé conciso y accionable.
+  `agent.py`. Es una línea por objetivo: Javi no quiere texto en esa página.
 - `Status = Parked` significa «ahora no»: esas tareas no entran en el Foco
   semanal. Son un descarte deliberado de Javi, no un olvido.
 - Desde el 14-nov-2026 **nada ejecuta tareas de principio a fin**. El lunes,
-  `brief.py` elige 3 tareas del backlog y prepara su primer paso en la Página
-  Fija; ejecutarlas es de Javi. El campo `Type` sigue describiendo cuánto puede
+  `brief.py` elige 3 tareas del backlog y las propone como 3 objetivos de una
+  línea en la Página Fija; validarlas y ejecutarlas es de Javi. El campo `Type` sigue describiendo cuánto puede
   automatizarse cada tarea, pero ya no decide quién la coge.
 - Todo corre sin supervisión vía GitHub Actions: si falta información, es mejor
   decir qué falta que inventarla.
